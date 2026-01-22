@@ -331,8 +331,7 @@ export async function deleteProduction(id: string): Promise<{ success: boolean; 
     const supabase = await createClient();
 
     // 1. Get the production record solely to verify existence
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: production, error: fetchError } = await (supabase.from("production") as any)
+    const { data: production, error: fetchError } = await supabase.from("production")
         .select("*")
         .eq("id", id)
         .single();
@@ -342,8 +341,7 @@ export async function deleteProduction(id: string): Promise<{ success: boolean; 
     }
 
     // 2. Find ALL associated inventory movements (consumptions)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: movements } = await (supabase.from("inventory_movements") as any)
+    const { data: movements } = await supabase.from("inventory_movements")
         .select("id, quantity, material_id")
         .eq("reference_id", id)
         .eq("movement_type", "consumo_producao");
@@ -351,8 +349,7 @@ export async function deleteProduction(id: string): Promise<{ success: boolean; 
     if (movements && movements.length > 0) {
         // 3. Revert stock for each material
         for (const movement of movements as { id: string; quantity: number; material_id: string }[]) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data: material } = await (supabase.from("materials") as any)
+            const { data: material } = await supabase.from("materials")
                 .select("current_stock")
                 .eq("id", movement.material_id)
                 .single();

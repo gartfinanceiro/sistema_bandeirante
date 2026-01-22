@@ -26,7 +26,7 @@ async function check() {
     console.log(`Cost Centers Count: ${ccCount}`);
 
     // 2. Check Categories
-    const { count: catCount, data: cats, error: catError } = await supabase
+    const { data: cats, error: catError } = await supabase
         .from('transaction_categories')
         .select('id, name, slug, cost_center_id');
 

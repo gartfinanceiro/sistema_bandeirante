@@ -319,11 +319,11 @@ export async function deleteTransaction(id: string): Promise<{
 
     try {
         // 1. Get transaction details before deletion
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: tx, error: txError } = await (supabase
             .from("transactions")
             .select("material_id")
             .eq("id", id)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
 
         if (txError) {
@@ -335,10 +335,10 @@ export async function deleteTransaction(id: string): Promise<{
             let totalToReverse = 0;
 
             // A. Check inbound_deliveries (Minério/Fundentes via Balança)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: deliveries } = await (supabase
                 .from("inbound_deliveries")
                 .select("weight_measured")
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .eq("transaction_id", id) as any);
 
             if (deliveries && deliveries.length > 0) {
@@ -348,11 +348,11 @@ export async function deleteTransaction(id: string): Promise<{
 
             // B. If no deliveries, check inventory_movements (Carvão direct entry)
             if (totalToReverse === 0) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const { data: movements } = await (supabase
                     .from("inventory_movements")
                     .select("quantity")
                     .eq("reference_id", id)
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     .eq("movement_type", "compra") as any);
 
                 if (movements && movements.length > 0) {

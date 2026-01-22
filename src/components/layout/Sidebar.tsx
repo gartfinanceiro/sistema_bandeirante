@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -104,12 +105,12 @@ export function Sidebar() {
                 <div className="flex flex-col h-full">
                     {/* Logo */}
                     <div className="flex items-center gap-3 px-6 py-5 border-b border-border">
-                        <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
+                        <div className="w-10 h-10 flex items-center justify-center shrink-0 relative">
+                            <Image
                                 src="/logo_bandeirante.png"
                                 alt="Logo Bandeirante"
-                                className="w-full h-full object-contain"
+                                fill
+                                className="object-contain"
                             />
                         </div>
                         <div className="flex flex-col">

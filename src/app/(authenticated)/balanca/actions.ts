@@ -44,10 +44,10 @@ export async function getOpenPurchaseOrders(): Promise<PurchaseOrder[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const transactionIds = (transactions as any[]).map(t => t.id);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: deliveries } = await (supabase
         .from("inbound_deliveries")
         .select("transaction_id, weight_measured")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .in("transaction_id", transactionIds) as any);
 
     const deliveryMap = new Map<string, number>();
@@ -100,12 +100,12 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
 
     try {
         // 1. Get Transaction info
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: tx, error: txError } = await (supabase
             .from("transactions")
             .select("material_id, materials(name)")
             .eq("id", transactionId)
-            .single() as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .single() as any);
 
         if (txError || !tx) throw new Error("Transação original não encontrada.");
 
@@ -216,11 +216,11 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
 
     try {
         // Get old delivery to calculate stock difference
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: oldDelivery, error: fetchError } = await (supabase
             .from("inbound_deliveries")
             .select("weight_measured, transaction_id")
             .eq("id", id)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
 
         if (fetchError || !oldDelivery) {
@@ -247,11 +247,11 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
         // Adjust stock if weight changed
         if (Math.abs(weightDiff) > 0.001) {
             // Get material_id from transaction
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: tx } = await (supabase
                 .from("transactions")
                 .select("material_id")
                 .eq("id", oldDelivery.transaction_id)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .single() as any);
 
             if (tx?.material_id) {
@@ -285,11 +285,11 @@ export async function deleteDelivery(id: string): Promise<{ success: boolean; er
 
     try {
         // Get delivery info before deleting
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: delivery, error: fetchError } = await (supabase
             .from("inbound_deliveries")
             .select("weight_measured, transaction_id")
             .eq("id", id)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
 
         if (fetchError || !delivery) {
@@ -299,11 +299,11 @@ export async function deleteDelivery(id: string): Promise<{ success: boolean; er
         const weight = Number(delivery.weight_measured);
 
         // Get material_id from transaction
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: tx } = await (supabase
             .from("transactions")
             .select("material_id")
             .eq("id", delivery.transaction_id)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
 
         // Delete delivery

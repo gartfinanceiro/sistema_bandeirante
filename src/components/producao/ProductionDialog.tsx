@@ -14,7 +14,6 @@ export function ProductionDialog({ isOpen, onClose, productionToEdit }: Producti
     const [error, setError] = useState<string | null>(null);
     const [materials, setMaterials] = useState<MaterialForProduction[]>([]);
     const [consumptions, setConsumptions] = useState<Record<string, number>>({});
-    const [tonsProduced, setTonsProduced] = useState<number>(0);
 
     // Reset error when dialog opens/closes/mode changes
     useEffect(() => {
@@ -39,8 +38,6 @@ export function ProductionDialog({ isOpen, onClose, productionToEdit }: Producti
 
     // Handle tons produced change → recalculate suggestions
     function handleTonsChange(value: number) {
-        setTonsProduced(value);
-
         if (value > 0) {
             const newConsumptions: Record<string, number> = {};
             materials.forEach(mat => {

@@ -74,14 +74,17 @@ async function runFix() {
             // Update Stock
             // We do this individually to avoid race conditions if run live, though script is sequential
             // Ideally we would fetch fresh stock but this is a fix script
-            await supabase.rpc('increment_stock', {
+            // Update Stock
+            const { error: rpcError } = await supabase.rpc('increment_stock', {
                 row_id: gusaMaterial.id,
                 quantity: prod.tons_produced
-            }).catch(async (err) => {
+            });
+
+            if (rpcError) {
                 // Fallback if RPC doesn't exist (it doesn't by default), use manual update
                 const { data: current } = await supabase.from("materials").select("current_stock").eq("id", gusaMaterial.id).single();
                 await supabase.from("materials").update({ current_stock: Number(current?.current_stock) + Number(prod.tons_produced) }).eq("id", gusaMaterial.id);
-            });
+            }
 
             updatedCount++;
             totalTonsAdded += Number(prod.tons_produced);

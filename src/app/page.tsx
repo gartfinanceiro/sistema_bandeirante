@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { signIn } from "@/app/(auth)/actions";
 
 export default function HomePage() {
@@ -32,17 +33,20 @@ export default function HomePage() {
             <div className="relative z-10 w-full max-w-md space-y-8">
                 {/* Header: Logo & Title */}
                 <div className="flex flex-col items-center text-center">
-                    <div className="mb-6 w-48 md:w-56">
-                        <img
+                    <div className="mb-6 w-48 md:w-56 relative h-24">
+                        <Image
                             src="/logo-header.png"
                             alt="Siderúrgica Bandeirante"
-                            className="h-auto w-full object-contain"
+                            fill
+                            className="object-contain"
+                            priority
                         />
                     </div>
                     <h1 className="text-xl md:text-2xl font-bold tracking-wider text-white uppercase drop-shadow-md">
                         SISTEMA GERENCIAL
                     </h1>
                 </div>
+
 
                 {/* Login Card */}
                 <div className="backdrop-blur-md bg-white/10 border border-white/20 rounded-xl p-8 shadow-2xl">

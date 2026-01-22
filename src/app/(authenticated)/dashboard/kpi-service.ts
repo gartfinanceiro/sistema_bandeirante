@@ -11,7 +11,8 @@ export async function getDashboardKPIs() {
         .select("type, amount")
         .eq("date", today);
 
-    const dailyBalance = (transactions || []).reduce((acc, curr) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dailyBalance = ((transactions as any[]) || []).reduce((acc, curr) => {
         return curr.type === "entrada"
             ? acc + Number(curr.amount)
             : acc - Number(curr.amount);
@@ -23,7 +24,8 @@ export async function getDashboardKPIs() {
         .select("tons_produced")
         .eq("date", today);
 
-    const productionToday = (production || []).reduce((acc, curr) => acc + Number(curr.tons_produced), 0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const productionToday = ((production as any[]) || []).reduce((acc, curr) => acc + Number(curr.tons_produced), 0);
 
     // 3. Estoque Carvão
     const { data: charcoal } = await supabase
@@ -32,7 +34,8 @@ export async function getDashboardKPIs() {
         .eq("name", "Carvão Vegetal")
         .single();
 
-    const charcoalStock = charcoal?.current_stock || 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const charcoalStock = (charcoal as any)?.current_stock || 0;
 
     // 4. CPT (Despesas do Mês / Produção do Mês)
     // Despesas
@@ -42,7 +45,8 @@ export async function getDashboardKPIs() {
         .eq("type", "saida")
         .gte("date", startOfMonth);
 
-    const totalExpenses = (monthExpenses || []).reduce((acc, curr) => acc + Number(curr.amount), 0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const totalExpenses = ((monthExpenses as any[]) || []).reduce((acc, curr) => acc + Number(curr.amount), 0);
 
     // Produção Mensal
     const { data: monthProduction } = await supabase
@@ -50,7 +54,8 @@ export async function getDashboardKPIs() {
         .select("tons_produced")
         .gte("date", startOfMonth);
 
-    const totalProduction = (monthProduction || []).reduce((acc, curr) => acc + Number(curr.tons_produced), 0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const totalProduction = ((monthProduction as any[]) || []).reduce((acc, curr) => acc + Number(curr.tons_produced), 0);
 
     // Cálculo CPT
     const cpt = totalProduction > 0 ? totalExpenses / totalProduction : 0;

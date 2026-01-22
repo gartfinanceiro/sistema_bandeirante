@@ -80,7 +80,8 @@ export async function getAllCategories(): Promise<Category[]> {
     }
 
     // Transform to flat structure
-    return (data || []).map((cat) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((data as any[]) || []).map((cat) => ({
         id: cat.id,
         name: cat.name,
         slug: cat.slug,
@@ -131,10 +132,11 @@ export async function createCategory(formData: FormData): Promise<{
         .limit(1)
         .single();
 
-    const displayOrder = (maxOrder?.display_order || 0) + 1;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const displayOrder = ((maxOrder as any)?.display_order || 0) + 1;
 
-    const { error } = await supabase
-        .from("transaction_categories")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from("transaction_categories") as any)
         .insert({
             name,
             slug,
@@ -192,7 +194,8 @@ export async function updateCategory(formData: FormData): Promise<{
     };
 
     // Only update slug for non-system categories
-    if (!existing?.is_system) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!(existing as any)?.is_system) {
         updateData.slug = name
             .toLowerCase()
             .normalize("NFD")
@@ -201,8 +204,8 @@ export async function updateCategory(formData: FormData): Promise<{
             .replace(/^_+|_+$/g, "");
     }
 
-    const { error } = await supabase
-        .from("transaction_categories")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from("transaction_categories") as any)
         .update(updateData)
         .eq("id", id);
 
@@ -225,10 +228,9 @@ export async function deleteCategory(id: string): Promise<{
 }> {
     const supabase = await createClient();
 
-    // Check if it's a system category
     const { data: category, error: checkError } = await supabase
         .from("transaction_categories")
-        .select("is_system, name")
+        .select("is_system, name, slug")
         .eq("id", id)
         .single();
 
@@ -236,18 +238,20 @@ export async function deleteCategory(id: string): Promise<{
         return { success: false, error: "Categoria não encontrada" };
     }
 
-    if (category?.is_system) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((category as any)?.is_system) {
         return {
             success: false,
-            error: `"${category.name}" é uma categoria do sistema e não pode ser excluída`
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            error: `"${(category as any).name}" é uma categoria do sistema e não pode ser excluída`
         };
     }
 
-    // Check if category is in use by transactions
     const { count } = await supabase
         .from("transactions")
         .select("*", { count: "exact", head: true })
-        .eq("category_id", category?.name); // Note: category_id stores slug now
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .eq("category_id", (category as any)?.slug); // Note: category_id stores slug now
 
     if (count && count > 0) {
         return {
@@ -257,8 +261,8 @@ export async function deleteCategory(id: string): Promise<{
     }
 
     // Soft delete (mark as inactive)
-    const { error } = await supabase
-        .from("transaction_categories")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from("transaction_categories") as any)
         .update({ is_active: false })
         .eq("id", id);
 

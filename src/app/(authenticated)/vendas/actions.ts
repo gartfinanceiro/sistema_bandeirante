@@ -470,9 +470,11 @@ export async function deleteExpedition(id: string): Promise<{ success: boolean; 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("materials") as any)
                 .update({
-                    current_stock: Number(gusaMaterial.current_stock) - Number(movement.quantity) // - (-X) = +X
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    current_stock: Number((gusaMaterial as any).current_stock) - Number(movement.quantity) // - (-X) = +X
                 })
-                .eq("id", gusaMaterial.id);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                .eq("id", (gusaMaterial as any).id);
 
             // Delete movement
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -542,9 +544,11 @@ export async function updateExpedition(id: string, formData: FormData): Promise<
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("materials") as any)
                     .update({
-                        current_stock: Number(gusaMaterial.current_stock) - weightDiff
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        current_stock: Number((gusaMaterial as any).current_stock) - weightDiff
                     })
-                    .eq("id", gusaMaterial.id);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    .eq("id", (gusaMaterial as any).id);
 
                 // Update movement
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any

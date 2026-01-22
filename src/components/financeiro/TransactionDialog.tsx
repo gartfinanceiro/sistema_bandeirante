@@ -26,7 +26,7 @@ const CATEGORY_CONFIG: Record<string, { isMaterial: boolean; materialType?: Visu
 };
 
 // Check if category is a raw material (matéria-prima) category
-function getCategoryConfig(slug: string | null, costCenterCode?: string): { isMaterial: boolean; materialType?: VisualMaterialType } {
+function getCategoryConfig(slug: string | null): { isMaterial: boolean; materialType?: VisualMaterialType } {
     if (slug && CATEGORY_CONFIG[slug]) {
         return CATEGORY_CONFIG[slug];
     }
@@ -105,20 +105,19 @@ export function TransactionDialog({
 
         // Find the category object
         let selectedCat: { slug?: string | null } | undefined;
-        let selectedGroupCode: string | undefined;
 
         for (const group of categories) {
             const cat = group.categories.find((c) => c.id === selectedCategoryId || c.slug === selectedCategoryId);
             if (cat) {
                 selectedCat = cat;
-                selectedGroupCode = group.code;
+                // selectedGroupCode = group.code; // Unused
                 break;
             }
         }
 
         if (selectedCat) {
             // Determine config based on slug
-            const config = getCategoryConfig(selectedCat.slug || null, selectedGroupCode);
+            const config = getCategoryConfig(selectedCat.slug || null);
             setMaterialType(config.materialType || null);
 
             // Get material ID for this type if applicable
