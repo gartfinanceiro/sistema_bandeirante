@@ -285,11 +285,12 @@ export async function createPurchaseTransaction(formData: FormData): Promise<{ s
         finalCategoryId = 'raw_material_general';
 
         try {
-            const { data: mat } = await supabase
+            const { data: mat } = await (supabase
                 .from("materials")
                 .select("name")
                 .eq("id", extractedId)
-                .single();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                .single() as any);
 
             if (mat) {
                 const lower = mat.name.toLowerCase();
