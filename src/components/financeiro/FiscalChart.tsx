@@ -40,7 +40,7 @@ export function FiscalChart({ credits, debits }: FiscalChartProps) {
                                 borderRadius: '0.5rem'
                             }}
                             itemStyle={{ color: 'hsl(var(--foreground))' }}
-                            formatter={(value: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value)}
+                            formatter={(value: any) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value)}
                         />
                         <Legend verticalAlign="top" height={36} />
                         <Bar name="Créditos (Entradas)" dataKey="Crédito" fill="#10b981" radius={[0, 4, 4, 0]} />
