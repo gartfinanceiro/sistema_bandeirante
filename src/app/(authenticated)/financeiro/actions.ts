@@ -438,11 +438,12 @@ export async function createTransaction(formData: FormData): Promise<{
         finalCategoryId = 'raw_material_general';
 
         try {
-            const { data: mat } = await supabase
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: mat } = await (supabase
                 .from("materials")
                 .select("name")
                 .eq("id", extractedId)
-                .single();
+                .single() as any);
 
             if (mat) {
                 const lower = mat.name.toLowerCase();
@@ -511,11 +512,12 @@ export async function updateTransaction(formData: FormData): Promise<{
         finalCategoryId = 'raw_material_general';
 
         try {
-            const { data: mat } = await supabase
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: mat } = await (supabase
                 .from("materials")
                 .select("name")
                 .eq("id", extractedId)
-                .single();
+                .single() as any);
 
             if (mat) {
                 const lower = mat.name.toLowerCase();
