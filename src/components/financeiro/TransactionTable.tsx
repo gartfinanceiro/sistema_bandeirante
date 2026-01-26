@@ -95,7 +95,16 @@ export function TransactionTable({
                                             <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
                                                 {tx.category.costCenter.code}
                                             </span>
-                                            {tx.category.name}
+                                            {tx.material?.name ? (
+                                                <span className="font-medium text-foreground">
+                                                    {tx.material.name}
+                                                    <span className="text-xs text-muted-foreground ml-1 font-normal opacity-70">
+                                                        ({tx.category.name})
+                                                    </span>
+                                                </span>
+                                            ) : (
+                                                tx.category.name
+                                            )}
                                         </span>
                                     ) : (
                                         <span className="italic">-</span>

@@ -37,6 +37,9 @@ export interface TransactionRow {
             name: string;
         };
     } | null;
+    material?: {
+        name: string;
+    } | null;
 }
 
 export interface MonthSummary {
@@ -107,12 +110,20 @@ export async function getCategories(): Promise<CategoryGroup[]> {
         return [];
     }
 
+    // Fetch Active Materials
+    const { data: materials, error: matError } = await supabase
+        .from("materials")
+        .select("id, name, unit")
+        .eq("is_active", true)
+        .order("name");
+
+    if (matError) {
+        console.error("Error fetching materials for categories:", matError);
+    }
+
     // Group categories by cost center
-    const grouped: CategoryGroup[] = (costCenters as { id: string; code: string; name: string; display_order: number }[]).map((cc) => ({
-        id: cc.id,
-        code: cc.code,
-        name: cc.name,
-        categories: (categories as { id: string; name: string; cost_center_id: string; requires_weight: boolean | null; material_id: string | null }[])
+    const grouped: CategoryGroup[] = (costCenters as { id: string; code: string; name: string; display_order: number }[]).map((cc) => {
+        let ccCategories = (categories as { id: string; name: string; cost_center_id: string; requires_weight: boolean | null; material_id: string | null }[])
             .filter((cat) => cat.cost_center_id === cc.id)
             .map((cat) => ({
                 id: cat.id,
@@ -121,8 +132,41 @@ export async function getCategories(): Promise<CategoryGroup[]> {
                 slug: (cat as any).slug,
                 requiresWeight: cat.requires_weight || false,
                 materialId: cat.material_id,
-            })),
-    }));
+            }));
+
+        // Inject Materials into "OD" (Operacional Direto) group
+        // Looking for code "OD" or similar name if code changes
+        if (cc.code === "OD" && materials) {
+            const materialCategories = materials.map((mat: any) => ({
+                id: `mat_${mat.id}`, // Prefix to avoid collision
+                name: mat.name,
+                slug: `material_${mat.id}`, // Custom slug format
+                requiresWeight: true, // Materials usually require weight
+                materialId: mat.id,
+            }));
+
+            // Create a Set of existing category names for O(1) lookup
+            const existingNames = new Set(ccCategories.map(c => c.name.toLowerCase()));
+
+            // Filter out materials that already exist as static categories
+            const newMaterialCategories = materialCategories.filter((mat: any) =>
+                !existingNames.has(mat.name.toLowerCase())
+            );
+
+            // Append unique materials
+            ccCategories = [...ccCategories, ...newMaterialCategories];
+
+            // Sort combined list by name
+            ccCategories.sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        return {
+            id: cc.id,
+            code: cc.code,
+            name: cc.name,
+            categories: ccCategories,
+        };
+    });
 
     // Filter out empty groups
     return grouped.filter((g) => g.categories.length > 0);
@@ -373,13 +417,43 @@ export async function createTransaction(formData: FormData): Promise<{
     const categoryId = formData.get("categoryId") as string;
     const status = formData.get("status") as PaymentStatus;
     const description = formData.get("description") as string;
+    const hasIcmsCredit = formData.get("hasIcmsCredit") === "true";
+    const icmsRate = parseFloat(formData.get("icmsRate") as string) || 0;
 
     if (!type || !amount || !date) {
         return { success: false, error: "Campos obrigatórios não preenchidos" };
     }
 
-    // Category is now stored as slug directly (TEXT)
-    const finalCategoryId = categoryId;
+    // Handle Virtual Material Categories (dynamic from Inventory)
+    let finalCategoryId = categoryId;
+    let finalMaterialId = null;
+
+    if (categoryId && categoryId.startsWith("material_")) {
+        // It's a virtual category! "material_<uuid>"
+        const extractedId = categoryId.replace("material_", "");
+        finalMaterialId = extractedId;
+
+        // Try to classify into a real category based on material name
+        // default to 'raw_material_general'
+        finalCategoryId = 'raw_material_general';
+
+        try {
+            const { data: mat } = await supabase
+                .from("materials")
+                .select("name")
+                .eq("id", extractedId)
+                .single();
+
+            if (mat) {
+                const lower = mat.name.toLowerCase();
+                if (lower.includes("carvão") || lower.includes("carvao")) finalCategoryId = "raw_material_charcoal";
+                else if (lower.includes("minério") || lower.includes("minerio") || lower.includes("ferro")) finalCategoryId = "raw_material_ore";
+                else if (lower.includes("fundente") || lower.includes("cal")) finalCategoryId = "raw_material_flux";
+            }
+        } catch (err) {
+            console.warn("Error classifying material category, using default:", err);
+        }
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from("transactions") as any).insert({
@@ -389,6 +463,9 @@ export async function createTransaction(formData: FormData): Promise<{
         category_id: finalCategoryId || null,
         status: status || "pago",
         description: description || null,
+        material_id: finalMaterialId,
+        has_icms_credit: hasIcmsCredit,
+        icms_rate: hasIcmsCredit ? icmsRate : 0,
     });
 
     if (error) {
@@ -417,24 +494,64 @@ export async function updateTransaction(formData: FormData): Promise<{
     const categoryId = formData.get("categoryId") as string;
     const status = formData.get("status") as PaymentStatus;
     const description = formData.get("description") as string;
+    const hasIcmsCredit = formData.get("hasIcmsCredit") === "true";
+    const icmsRate = parseFloat(formData.get("icmsRate") as string) || 0;
 
     if (!id || !type || !amount || !date) {
         return { success: false, error: "Campos obrigatórios não preenchidos" };
     }
 
-    // Category is stored as slug directly (TEXT)
-    const finalCategoryId = categoryId;
+    // Handle Virtual Material Categories
+    let finalCategoryId = categoryId;
+    let finalMaterialId = null;
+
+    if (categoryId && categoryId.startsWith("material_")) {
+        const extractedId = categoryId.replace("material_", "");
+        finalMaterialId = extractedId;
+        finalCategoryId = 'raw_material_general';
+
+        try {
+            const { data: mat } = await supabase
+                .from("materials")
+                .select("name")
+                .eq("id", extractedId)
+                .single();
+
+            if (mat) {
+                const lower = mat.name.toLowerCase();
+                if (lower.includes("carvão") || lower.includes("carvao")) finalCategoryId = "raw_material_charcoal";
+                else if (lower.includes("minério") || lower.includes("minerio") || lower.includes("ferro")) finalCategoryId = "raw_material_ore";
+                else if (lower.includes("fundente") || lower.includes("cal")) finalCategoryId = "raw_material_flux";
+            }
+        } catch (err) {
+            console.warn("Error classifying material category, using default:", err);
+        }
+    }
+
+    // Prepare update object
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updateData: any = {
+        type,
+        amount,
+        date,
+        category_id: finalCategoryId || null,
+        status: status || "pago",
+        description: description || null,
+        has_icms_credit: hasIcmsCredit,
+        icms_rate: hasIcmsCredit ? icmsRate : 0,
+    };
+
+    // Only update material_id if it was explicitly a material category selection
+    // otherwise we might preserve existing or set to null? 
+    // If user changed category to non-material, we should probably set material_id to null.
+    // Ideally we'd set it to finalMaterialId (which is null if not material category).
+    // But existing logic in other places might set material_id separately?
+    // Let's assume if selecting a category, we overwrite material_id.
+    updateData.material_id = finalMaterialId;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from("transactions") as any)
-        .update({
-            type,
-            amount,
-            date,
-            category_id: finalCategoryId || null,
-            status: status || "pago",
-            description: description || null,
-        })
+        .update(updateData)
         .eq("id", id);
 
     if (error) {

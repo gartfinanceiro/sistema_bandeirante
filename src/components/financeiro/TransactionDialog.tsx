@@ -63,6 +63,10 @@ export function TransactionDialog({
     const [description, setDescription] = useState<string>("");
     const [status, setStatus] = useState<string>("pago");
 
+    // Fiscal fields
+    const [hasIcmsCredit, setHasIcmsCredit] = useState(false);
+    const [icmsRate, setIcmsRate] = useState<string>("");
+
     const isEditing = !!initialData;
 
     // Load suppliers on mount
@@ -89,6 +93,16 @@ export function TransactionDialog({
                 // We prefer slug.
                 setSelectedCategoryId(initialData.category.slug || initialData.category.id);
             }
+
+            // Set Fiscal Data if present (assuming TransactionRow updated to include these, otherwise standard defaulting)
+            // Note: We need to ensure logic handles if fields are missing in type, but DB has them.
+            // For now, let's assume they might be in `initialData` as any extended type or just default false.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const txData = initialData as any;
+            if (txData.has_icms_credit) {
+                setHasIcmsCredit(true);
+                setIcmsRate(txData.icms_rate?.toString() || "0");
+            }
         } else if (isOpen && !initialData) {
             // Create Mode - Reset
             resetForm();
@@ -100,36 +114,66 @@ export function TransactionDialog({
     useEffect(() => {
         if (!selectedCategoryId) {
             setMaterialType(null);
+            setMaterialId("");
+            setMaterialUnit("t");
             return;
         }
 
-        // Find the category object
-        let selectedCat: { slug?: string | null } | undefined;
+        // Find the category object in the nested structure
+        let selectedCat: { slug?: string | null; materialId?: string | null } | undefined;
 
         for (const group of categories) {
             const cat = group.categories.find((c) => c.id === selectedCategoryId || c.slug === selectedCategoryId);
             if (cat) {
                 selectedCat = cat;
-                // selectedGroupCode = group.code; // Unused
                 break;
             }
         }
 
         if (selectedCat) {
-            // Determine config based on slug
-            const config = getCategoryConfig(selectedCat.slug || null);
-            setMaterialType(config.materialType || null);
+            // New Logic: Check if it has a direct materialId (Dynamic Material Category)
+            if (selectedCat.materialId) {
+                setMaterialId(selectedCat.materialId);
+                // We assume unit is 't' or need to fetch details. 
+                // Since getCategories only fetched minimal info, we might rely on the fact 
+                // that stock actions usually assume 't' or fetch material details.
+                // ideally getCategories should return unit too, but let's stick to 't' default or fetch if needed.
+                // For now, set generic 't' or keep previous unit if not changed.
+                setMaterialType('carvao'); // Hack to enable "Purchase Mode" UI, visualType doesn't matter much if materialId is set directly
+            }
+            // Legacy Logic: Check config by slug
+            else {
+                const config = getCategoryConfig(selectedCat.slug || null);
+                setMaterialType(config.materialType || null);
 
-            // Get material ID for this type if applicable
-            if (config.isMaterial && config.materialType) {
-                getMaterialByType(config.materialType).then((mat) => {
-                    if (mat) {
-                        setMaterialId(mat.id);
-                        setMaterialUnit(mat.unit);
-                    }
-                });
+                // Get material ID for this type if applicable (Legacy Pattern)
+                if (config.isMaterial && config.materialType) {
+                    getMaterialByType(config.materialType).then((mat) => {
+                        if (mat) {
+                            setMaterialId(mat.id);
+                            setMaterialUnit(mat.unit);
+                        } else {
+                            setMaterialId("");
+                        }
+                    });
+                } else {
+                    setMaterialId("");
+                }
             }
         }
+
+        // Reset Fiscal if category changes and it's not freight (optional, user might want persistence but cleaner to reset)
+        // We'll check isFreightLogic in render or here. 
+        // Let's rely on the user to uncheck if they switch cat, or we can auto-reset.
+        // Auto-reset seems safer to avoid accidental credit claiming.
+        if (selectedCat) {
+            const isFreight = selectedCat.name?.toLowerCase().includes("frete");
+            if (!isFreight && !isEditing) {
+                setHasIcmsCredit(false);
+                setIcmsRate("");
+            }
+        }
+
     }, [selectedCategoryId, categories]);
 
     // Calculate quantity when amount or supplier changes
@@ -166,6 +210,14 @@ export function TransactionDialog({
     // We'll disable "Purchase Mode" features (stock add) in Edit Mode for safety unless requested.
     const isPurchaseMode = !isEditing && type === "saida" && materialType !== null;
 
+    // Check if selected category is Logistics/Freight
+    const selectedCategoryName = categories
+        .flatMap(g => g.categories)
+        .find(c => c.id === selectedCategoryId || c.slug === selectedCategoryId)
+        ?.name.toLowerCase() || "";
+
+    const isFreightCategory = selectedCategoryName.includes("frete");
+
     async function handleSubmit(formData: FormData) {
         formData.set("type", type);
         // Explicitly set controlled inputs if needed, though name attr handles it usually.
@@ -191,6 +243,8 @@ export function TransactionDialog({
                 formData.set("quantity", manualQty || calculatedQty.toString());
                 formData.set("addToStock", addToStock ? "true" : "false");
                 formData.set("materialId", materialId);
+                formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
+                formData.set("icmsRate", icmsRate);
 
                 const result = await createPurchaseTransaction(formData);
                 if (result.success) {
@@ -201,6 +255,9 @@ export function TransactionDialog({
                 }
             } else {
                 // Regular transaction
+                formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
+                formData.set("icmsRate", icmsRate);
+
                 const result = await createTransaction(formData);
                 if (result.success) {
                     resetForm();
@@ -224,6 +281,8 @@ export function TransactionDialog({
         setCalculatedQty(0);
         setManualQty("");
         setAddToStock(true);
+        setHasIcmsCredit(false);
+        setIcmsRate("");
         setError(null);
     }
 
@@ -410,6 +469,50 @@ export function TransactionDialog({
                                 </div>
                             )}
 
+
+                            {/* Section: Fiscal Data (Only for Freight) */}
+                            {isFreightCategory && type === "saida" && (
+                                <div className="p-4 rounded-md bg-purple-50 border border-purple-100 space-y-3 animate-in fade-in slide-in-from-top-2">
+                                    <h3 className="text-sm font-semibold text-purple-900 flex items-center gap-2">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                        Dados Fiscais
+                                    </h3>
+
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            id="hasIcmsCredit"
+                                            type="checkbox"
+                                            checked={hasIcmsCredit}
+                                            onChange={(e) => setHasIcmsCredit(e.target.checked)}
+                                            className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                        />
+                                        <label htmlFor="hasIcmsCredit" className="text-sm text-purple-800 font-medium cursor-pointer">
+                                            Gera crédito de ICMS
+                                        </label>
+                                    </div>
+
+                                    {hasIcmsCredit && (
+                                        <div className="space-y-1 animate-in slide-in-from-top-2">
+                                            <label htmlFor="icmsRate" className="text-xs font-medium text-purple-800 ml-6 block">
+                                                Alíquota de ICMS (%)
+                                            </label>
+                                            <div className="ml-6 relative">
+                                                <input
+                                                    id="icmsRate"
+                                                    type="number"
+                                                    value={icmsRate}
+                                                    onChange={(e) => setIcmsRate(e.target.value)}
+                                                    placeholder="0,00"
+                                                    min="0"
+                                                    step="0.01"
+                                                    className="w-full h-9 pl-3 pr-3 rounded-md border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Stock Info Alert (Replacing Auto-Stock) */}
                             {isPurchaseMode && (
                                 <div className="p-3 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
@@ -498,8 +601,8 @@ export function TransactionDialog({
                             </div>
                         </form >
                     </div >
-                </div>
-            </div>
+                </div >
+            </div >
         </>
     );
 }

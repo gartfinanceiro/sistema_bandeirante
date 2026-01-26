@@ -186,6 +186,7 @@ export async function createSupplier(formData: FormData): Promise<{ success: boo
     const materialId = formData.get("materialId") as string;
     const defaultPriceStr = formData.get("defaultPrice") as string;
     const hasIcms = formData.get("hasIcms") === "true";
+    const icmsRateStr = formData.get("icmsRate") as string;
 
     if (!name || !materialId) {
         return { success: false, error: "Campos obrigatórios: Nome e Material" };
@@ -193,6 +194,7 @@ export async function createSupplier(formData: FormData): Promise<{ success: boo
 
     // Handle empty string as null
     const defaultPrice = defaultPriceStr && defaultPriceStr.trim() !== "" ? parseFloat(defaultPriceStr) : null;
+    const icmsRate = hasIcms && icmsRateStr && icmsRateStr.trim() !== "" ? parseFloat(icmsRateStr) : 0;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from("suppliers") as any).insert({
@@ -200,7 +202,7 @@ export async function createSupplier(formData: FormData): Promise<{ success: boo
         material_id: materialId,
         default_price: defaultPrice,
         has_icms: hasIcms,
-        // Keep legacy column null
+        icms_rate: icmsRate,
     });
 
     if (error) return { success: false, error: error.message };
@@ -216,12 +218,14 @@ export async function updateSupplier(supplierId: string, formData: FormData): Pr
     const materialId = formData.get("materialId") as string;
     const defaultPriceStr = formData.get("defaultPrice") as string;
     const hasIcms = formData.get("hasIcms") === "true";
+    const icmsRateStr = formData.get("icmsRate") as string;
 
     if (!name || !materialId) {
         return { success: false, error: "Campos obrigatórios: Nome e Material" };
     }
 
     const defaultPrice = defaultPriceStr && defaultPriceStr.trim() !== "" ? parseFloat(defaultPriceStr) : null;
+    const icmsRate = hasIcms && icmsRateStr && icmsRateStr.trim() !== "" ? parseFloat(icmsRateStr) : 0;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from("suppliers") as any)
@@ -230,6 +234,7 @@ export async function updateSupplier(supplierId: string, formData: FormData): Pr
             material_id: materialId,
             default_price: defaultPrice,
             has_icms: hasIcms,
+            icms_rate: icmsRate,
             updated_at: new Date().toISOString(),
         })
         .eq("id", supplierId);
@@ -270,8 +275,35 @@ export async function createPurchaseTransaction(formData: FormData): Promise<{ s
 
     if (!amount || !date) return { success: false, error: "Campos obrigatórios" };
 
+    // Handle Virtual Material Categories
+    let finalCategoryId = categoryId;
+    let finalMaterialId = materialId;
+
+    if (categoryId && categoryId.startsWith("material_")) {
+        const extractedId = categoryId.replace("material_", "");
+        finalMaterialId = extractedId;
+        finalCategoryId = 'raw_material_general';
+
+        try {
+            const { data: mat } = await supabase
+                .from("materials")
+                .select("name")
+                .eq("id", extractedId)
+                .single();
+
+            if (mat) {
+                const lower = mat.name.toLowerCase();
+                if (lower.includes("carvão") || lower.includes("carvao")) finalCategoryId = "raw_material_charcoal";
+                else if (lower.includes("minério") || lower.includes("minerio") || lower.includes("ferro")) finalCategoryId = "raw_material_ore";
+                else if (lower.includes("fundente") || lower.includes("cal")) finalCategoryId = "raw_material_flux";
+            }
+        } catch (err) {
+            console.warn("Error classifying material category, using default:", err);
+        }
+    }
+
     // Check if this is a Carvão purchase (uses slug)
-    const isCharcoal = categoryId === 'raw_material_charcoal';
+    const isCharcoal = finalCategoryId === 'raw_material_charcoal';
 
     // For Carvão: don't set quantity in transaction (won't appear in Balança)
     // For Minério/Fundentes: set quantity (will appear in Balança)
@@ -284,10 +316,10 @@ export async function createPurchaseTransaction(formData: FormData): Promise<{ s
             type: "saida",
             amount,
             date,
-            category_id: categoryId || null,
+            category_id: finalCategoryId || null,
             status: "pago",
             description: description || `Compra de matéria-prima`,
-            material_id: materialId || null,
+            material_id: finalMaterialId || null,
             supplier_id: supplierId || null,
             quantity: transactionQuantity, // null for Carvão = won't appear in Balança
         })

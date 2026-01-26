@@ -106,11 +106,10 @@ export function Sidebar() {
                     {/* Logo */}
                     <div className="flex items-center gap-3 px-6 py-5 border-b border-border">
                         <div className="w-10 h-10 flex items-center justify-center shrink-0 relative">
-                            <Image
+                            <img
                                 src="/logo_bandeirante.png"
                                 alt="Logo Bandeirante"
-                                fill
-                                className="object-contain"
+                                className="w-full h-full object-contain"
                             />
                         </div>
                         <div className="flex flex-col">

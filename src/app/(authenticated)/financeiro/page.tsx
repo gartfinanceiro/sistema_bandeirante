@@ -7,6 +7,7 @@ import { TransactionDialog } from "@/components/financeiro/TransactionDialog";
 import { TransactionTable } from "@/components/financeiro/TransactionTable";
 import { CategoryManagerDialog } from "@/components/financeiro/CategoryManagerDialog";
 import { FinancialAnalysisView } from "@/components/financeiro/FinancialAnalysisView";
+import { FiscalDashboard } from "@/components/financeiro/FiscalDashboard";
 import {
     getCategories,
     getMonthSummary,
@@ -24,7 +25,7 @@ export default function FinanceiroPage() {
     const [month, setMonth] = useState(now.getMonth() + 1);
     const [year, setYear] = useState(now.getFullYear());
     const [page, setPage] = useState(1);
-    const [activeTab, setActiveTab] = useState<"transacoes" | "relatorios">("transacoes");
+    const [activeTab, setActiveTab] = useState<"transacoes" | "relatorios" | "fiscal">("transacoes");
 
     // Data states
     const [summary, setSummary] = useState<MonthSummary>({
@@ -188,12 +189,26 @@ export default function FinanceiroPage() {
                     >
                         Relatórios (KPIs)
                     </button>
+                    <button
+                        onClick={() => setActiveTab("fiscal")}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "fiscal"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+                            }`}
+                    >
+                        Fiscal (ICMS)
+                    </button>
                 </nav>
             </div>
 
             {/* Tab Content */}
             {activeTab === "relatorios" ? (
                 <FinancialAnalysisView
+                    month={month}
+                    year={year}
+                />
+            ) : activeTab === "fiscal" ? (
+                <FiscalDashboard
                     month={month}
                     year={year}
                 />

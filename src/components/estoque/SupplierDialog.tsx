@@ -24,6 +24,7 @@ export function SupplierDialog({ isOpen, onClose, supplierToEdit, materials }: S
     const [materialId, setMaterialId] = useState("");
     const [defaultPrice, setDefaultPrice] = useState("");
     const [hasIcms, setHasIcms] = useState(false);
+    const [icmsRate, setIcmsRate] = useState("");
 
     // Reset form when dialog opens/closes or when supplier changes
     useEffect(() => {
@@ -33,11 +34,13 @@ export function SupplierDialog({ isOpen, onClose, supplierToEdit, materials }: S
                 setMaterialId(supplierToEdit.materialId || "");
                 setDefaultPrice(supplierToEdit.defaultPrice?.toString() || "");
                 setHasIcms(supplierToEdit.hasIcms);
+                setIcmsRate(supplierToEdit.icmsRate?.toString() || "");
             } else {
                 setName("");
                 setMaterialId("");
                 setDefaultPrice("");
                 setHasIcms(false);
+                setIcmsRate("");
             }
             setError(null);
         }
@@ -56,6 +59,7 @@ export function SupplierDialog({ isOpen, onClose, supplierToEdit, materials }: S
         formData.set("materialId", materialId);
         formData.set("defaultPrice", defaultPrice);
         formData.set("hasIcms", hasIcms ? "true" : "false");
+        formData.set("icmsRate", icmsRate);
 
         startTransition(async () => {
             const result = isEditMode
@@ -158,17 +162,47 @@ export function SupplierDialog({ isOpen, onClose, supplierToEdit, materials }: S
                             </p>
                         </div>
 
-                        <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/30">
-                            <input
-                                id="hasIcms"
-                                type="checkbox"
-                                checked={hasIcms}
-                                onChange={(e) => setHasIcms(e.target.checked)}
-                                className="h-4 w-4 rounded border-input bg-background text-primary focus:ring-primary"
-                            />
-                            <label htmlFor="hasIcms" className="text-sm font-medium text-foreground cursor-pointer">
-                                Gera crédito de ICMS
-                            </label>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/30">
+                                <input
+                                    id="hasIcms"
+                                    type="checkbox"
+                                    checked={hasIcms}
+                                    onChange={(e) => {
+                                        setHasIcms(e.target.checked);
+                                        if (!e.target.checked) setIcmsRate("");
+                                    }}
+                                    className="h-4 w-4 rounded border-input bg-background text-primary focus:ring-primary"
+                                />
+                                <label htmlFor="hasIcms" className="text-sm font-medium text-foreground cursor-pointer">
+                                    Gera crédito de ICMS
+                                </label>
+                            </div>
+
+                            {/* Conditional ICMS Rate Input */}
+                            {hasIcms && (
+                                <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
+                                    <label htmlFor="icmsRate" className="text-sm font-medium text-foreground">
+                                        Alíquota de ICMS (%)
+                                    </label>
+                                    <div className="relative">
+                                        <input
+                                            id="icmsRate"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            max="100"
+                                            value={icmsRate}
+                                            onChange={(e) => setIcmsRate(e.target.value)}
+                                            placeholder="Ex: 12.00"
+                                            className="w-full h-10 px-3 rounded-md border border-input bg-muted/50 focus:bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+                                        />
+                                        <div className="absolute right-3 top-2.5 pointer-events-none text-muted-foreground font-medium">
+                                            %
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {error && (
