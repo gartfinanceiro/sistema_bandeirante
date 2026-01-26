@@ -6,6 +6,7 @@ import { SummaryCards } from "@/components/financeiro/SummaryCards";
 import { TransactionDialog } from "@/components/financeiro/TransactionDialog";
 import { TransactionTable } from "@/components/financeiro/TransactionTable";
 import { CategoryManagerDialog } from "@/components/financeiro/CategoryManagerDialog";
+import { FinancialAnalysisView } from "@/components/financeiro/FinancialAnalysisView";
 import {
     getCategories,
     getMonthSummary,
@@ -23,6 +24,7 @@ export default function FinanceiroPage() {
     const [month, setMonth] = useState(now.getMonth() + 1);
     const [year, setYear] = useState(now.getFullYear());
     const [page, setPage] = useState(1);
+    const [activeTab, setActiveTab] = useState<"transacoes" | "relatorios">("transacoes");
 
     // Data states
     const [summary, setSummary] = useState<MonthSummary>({
@@ -165,37 +167,67 @@ export default function FinanceiroPage() {
                 isLoading={isLoading}
             />
 
-            {/* Filter & Table Section */}
-            <div className="space-y-4">
-                {/* Month Filter */}
-                <div className="flex items-center gap-4">
-                    <label htmlFor="monthFilter" className="text-sm font-medium text-muted-foreground">
-                        Período:
-                    </label>
-                    <select
-                        id="monthFilter"
-                        value={`${year}-${month}`}
-                        onChange={handleMonthChange}
-                        className="h-9 px-3 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+            {/* Navigation Tabs */}
+            <div className="border-b border-border">
+                <nav className="-mb-px flex space-x-8">
+                    <button
+                        onClick={() => setActiveTab("transacoes")}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "transacoes"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+                            }`}
                     >
-                        {monthOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* Transactions Table */}
-                <TransactionTable
-                    transactions={transactions.data}
-                    page={page}
-                    totalPages={transactions.totalPages}
-                    onPageChange={setPage}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                />
+                        Transações
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("relatorios")}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "relatorios"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+                            }`}
+                    >
+                        Relatórios (KPIs)
+                    </button>
+                </nav>
             </div>
+
+            {/* Tab Content */}
+            {activeTab === "relatorios" ? (
+                <FinancialAnalysisView
+                    month={month}
+                    year={year}
+                />
+            ) : (
+                /* Filter & Table Section */
+                <div className="space-y-4 animate-in fade-in duration-200">
+                    <div className="flex items-center gap-4">
+                        <label htmlFor="monthFilter" className="text-sm font-medium text-muted-foreground">
+                            Período:
+                        </label>
+                        <select
+                            id="monthFilter"
+                            value={`${year}-${month}`}
+                            onChange={handleMonthChange}
+                            className="h-9 px-3 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+                        >
+                            {monthOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <TransactionTable
+                        transactions={transactions.data}
+                        page={page}
+                        totalPages={transactions.totalPages}
+                        onPageChange={setPage}
+                        onEdit={handleEdit}
+                        onDelete={handleDelete}
+                    />
+                </div>
+            )}
 
             {/* Transaction Dialog */}
             <TransactionDialog

@@ -45,6 +45,27 @@ export interface MonthSummary {
     balance: number;
 }
 
+export interface ReportCategory {
+    id: string;
+    name: string;
+    slug: string | null;
+    total: number;
+    percentage: number;
+    transactions: {
+        id: string;
+        date: string;
+        description: string;
+        amount: number;
+        supplierName?: string;
+    }[];
+}
+
+export interface ExpenseReport {
+    categories: ReportCategory[];
+    macroCategories: ReportCategory[];
+    totalExpenses: number;
+}
+
 export interface PaginatedTransactions {
     data: TransactionRow[];
     total: number;
@@ -145,6 +166,124 @@ export async function getMonthSummary(
         totalEntries,
         totalExits,
         balance: totalEntries - totalExits,
+    };
+}
+
+// =============================================================================
+// Get Expenses Report (Donut & Drill-down)
+// =============================================================================
+
+export async function getExpensesReport(
+    month: number,
+    year: number
+): Promise<ExpenseReport> {
+    const supabase = await createClient();
+
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const endDate = new Date(year, month, 0).toISOString().split("T")[0];
+
+    // Get all expense transactions for the period
+    const { data: transactions, error } = await supabase
+        .from("transactions")
+        .select(`
+            id,
+            date,
+            amount,
+            description,
+            category:transaction_categories (
+                id,
+                name,
+                slug,
+                costCenter:cost_centers (
+                    name
+                )
+            )
+        `)
+        .eq("type", "saida")
+        .gte("date", startDate)
+        .lte("date", endDate);
+
+    if (error || !transactions) {
+        console.error("Error fetching expenses report:", error);
+        return { categories: [], macroCategories: [], totalExpenses: 0 };
+    }
+
+    // Aggregate by category AND macro-category
+    const categoryMap = new Map<string, ReportCategory>();
+    const macroMap = new Map<string, ReportCategory>();
+    let totalExpenses = 0;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const tx of (transactions as any[])) {
+        const amount = Number(tx.amount);
+        totalExpenses += amount;
+
+        // 1. Category Aggregation
+        const catName = tx.category?.name || "Sem Categoria";
+        const catId = tx.category?.id || "uncategorized";
+        const catSlug = tx.category?.slug || null;
+
+        if (!categoryMap.has(catId)) {
+            categoryMap.set(catId, {
+                id: catId,
+                name: catName,
+                slug: catSlug,
+                total: 0,
+                percentage: 0,
+                transactions: [],
+            });
+        }
+
+        const catEntry = categoryMap.get(catId)!;
+        catEntry.total += amount;
+        catEntry.transactions.push({
+            id: tx.id,
+            date: tx.date,
+            description: tx.description || "Sem descrição",
+            amount: amount,
+        });
+
+        // 2. Macro Aggregation (Cost Center)
+        const macroName = tx.category?.costCenter?.name || "Outros";
+        // Use name as ID for macro since we group by name
+        const macroId = macroName;
+
+        if (!macroMap.has(macroId)) {
+            macroMap.set(macroId, {
+                id: macroId,
+                name: macroName,
+                slug: null,
+                total: 0,
+                percentage: 0,
+                transactions: [], // Not needed for macro chart but keeps type consistent
+            });
+        }
+        const macroEntry = macroMap.get(macroId)!;
+        macroEntry.total += amount;
+    }
+
+    // Helper to process maps into sorted arrays
+    const processMap = (map: Map<string, ReportCategory>) => {
+        const array = Array.from(map.values()).map(item => ({
+            ...item,
+            percentage: totalExpenses > 0 ? (item.total / totalExpenses) * 100 : 0
+        }));
+        // Sort by Total Descending
+        return array.sort((a, b) => b.total - a.total);
+    };
+
+    const categories = processMap(categoryMap);
+    const macroCategories = processMap(macroMap);
+
+    // Sort transactions within category by date desc
+    categories.forEach(cat => {
+        cat.transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+
+    return {
+        categories,
+        macroCategories,
+        totalExpenses
     };
 }
 
