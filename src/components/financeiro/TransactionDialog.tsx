@@ -120,7 +120,7 @@ export function TransactionDialog({
         }
 
         // Find the category object in the nested structure
-        let selectedCat: { slug?: string | null; materialId?: string | null } | undefined;
+        let selectedCat: { id: string; name: string; slug?: string | null; materialId?: string | null } | undefined;
 
         for (const group of categories) {
             const cat = group.categories.find((c) => c.id === selectedCategoryId || c.slug === selectedCategoryId);
