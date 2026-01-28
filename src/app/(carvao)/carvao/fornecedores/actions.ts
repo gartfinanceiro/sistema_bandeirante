@@ -366,11 +366,11 @@ export async function uploadDocumentFile(formData: FormData): Promise<{
             .eq("id", documentId)
             .single();
 
-        if (existingDoc?.file_path) {
+        if ((existingDoc as any)?.file_path) {
             // Delete old file from storage
             await supabase.storage
                 .from('carvao-documents')
-                .remove([existingDoc.file_path]);
+                .remove([(existingDoc as any)?.file_path]);
         }
     }
 
