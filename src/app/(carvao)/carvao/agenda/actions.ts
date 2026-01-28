@@ -81,7 +81,7 @@ export async function createSchedule(formData: FormData): Promise<{
         return { success: false, error: "Volume estimado deve ser um número positivo" };
     }
 
-    const { error } = await supabase.from("carvao_discharge_schedule").insert({
+    const { error } = await (supabase.from("carvao_discharge_schedule") as any).insert({
         supplier_id,
         scheduled_date,
         sequence_order,
@@ -91,7 +91,7 @@ export async function createSchedule(formData: FormData): Promise<{
         estimated_volume_mdc,
         notes: notes || null,
         status: "aguardando",
-    });
+    } as any);
 
     if (error) {
         console.error("Error creating schedule:", error);
@@ -143,8 +143,8 @@ export async function updateSchedule(formData: FormData): Promise<{
         return { success: false, error: "Volume estimado deve ser um número positivo" };
     }
 
-    const { error } = await supabase
-        .from("carvao_discharge_schedule")
+    const { error } = await (supabase
+        .from("carvao_discharge_schedule") as any)
         .update({
             supplier_id,
             scheduled_date,
@@ -154,7 +154,7 @@ export async function updateSchedule(formData: FormData): Promise<{
             gca_number,
             estimated_volume_mdc,
             notes: notes || null,
-        })
+        } as any)
         .eq("id", id);
 
     if (error) {

@@ -80,6 +80,76 @@ export type CarvaoScheduleStatus =
 export interface Database {
     public: {
         Tables: {
+            carvao_suppliers: {
+                Row: Supplier;
+                Insert: Partial<Supplier>;
+                Update: Partial<Supplier>;
+            };
+            carvao_supplier_documents: {
+                Row: SupplierDocument;
+                Insert: Partial<SupplierDocument>;
+                Update: Partial<SupplierDocument>;
+            };
+            carvao_discharge_schedule: {
+                Row: DischargeSchedule;
+                Insert: {
+                    id?: string;
+                    supplier_id: string;
+                    scheduled_date: string;
+                    sequence_order: number;
+                    truck_plate: string;
+                    invoice_number: string;
+                    gca_number: string;
+                    estimated_volume_mdc: number;
+                    status?: CarvaoScheduleStatus;
+                    confirmed_at?: string | null;
+                    notes?: string | null;
+                    created_at?: string;
+                    created_by?: string | null;
+                };
+                Update: Partial<DischargeSchedule>;
+            };
+            carvao_discharges: {
+                Row: {
+                    id: string;
+                    schedule_id: string;
+                    status: string;
+                    started_at: string | null;
+                    completed_at: string | null;
+                    actual_volume: number | null;
+                    moisture_content: number | null;
+                    impurity_content: number | null;
+                    notes: string | null;
+                    created_at: string | null;
+                    updated_at: string | null;
+                };
+                Insert: {
+                    id?: string;
+                    schedule_id: string;
+                    status?: string;
+                    started_at?: string | null;
+                    completed_at?: string | null;
+                    actual_volume?: number | null;
+                    moisture_content?: number | null;
+                    impurity_content?: number | null;
+                    notes?: string | null;
+                    created_at?: string | null;
+                    updated_at?: string | null;
+                };
+                Update: {
+                    id?: string;
+                    schedule_id?: string;
+                    status?: string;
+                    started_at?: string | null;
+                    completed_at?: string | null;
+                    actual_volume?: number | null;
+                    moisture_content?: number | null;
+                    impurity_content?: number | null;
+                    notes?: string | null;
+                    created_at?: string | null;
+                    updated_at?: string | null;
+                };
+            };
             materials: {
                 Row: {
                     id: string;
@@ -605,6 +675,8 @@ export interface Database {
         };
     };
 }
+
+
 
 // =============================================================================
 // Helper Types

@@ -47,8 +47,8 @@ export async function createSupplier(formData: FormData): Promise<{
         notes: (formData.get("notes") as string) || null,
     };
 
-    const { error } = await supabase
-        .from("carvao_suppliers")
+    const { error } = await (supabase
+        .from("carvao_suppliers") as any)
         .insert(supplierData);
 
     if (error) {
@@ -88,8 +88,8 @@ export async function updateSupplier(formData: FormData): Promise<{
         notes: (formData.get("notes") as string) || null,
     };
 
-    const { error } = await supabase
-        .from("carvao_suppliers")
+    const { error } = await (supabase
+        .from("carvao_suppliers") as any)
         .update(supplierData)
         .eq("id", id);
 
@@ -164,14 +164,14 @@ export async function upsertSupplierDocument(formData: FormData): Promise<{
 
     if (id) {
         // Update existing document
-        ({ error } = await supabase
-            .from("carvao_supplier_documents")
+        ({ error } = await (supabase
+            .from("carvao_supplier_documents") as any)
             .update(documentData)
             .eq("id", id));
     } else {
         // Insert new document
-        ({ error } = await supabase
-            .from("carvao_supplier_documents")
+        ({ error } = await (supabase
+            .from("carvao_supplier_documents") as any)
             .insert(documentData));
     }
 
@@ -195,15 +195,17 @@ export async function recalculateComplianceStatus(supplierId: string): Promise<v
     const supabase = await createClient();
 
     // Get all documents for this supplier (include file_path for Fase 3)
-    const { data: documents } = await supabase
+    const { data: documentsData } = await supabase
         .from("carvao_supplier_documents")
         .select("document_type, status, expiry_date, file_path")
         .eq("supplier_id", supplierId);
 
+    const documents = documentsData as any[];
+
     if (!documents || documents.length === 0) {
         // No documents, set to pendente
-        await supabase
-            .from("carvao_suppliers")
+        await (supabase
+            .from("carvao_suppliers") as any)
             .update({ compliance_status: "pendente" })
             .eq("id", supplierId);
         return;
@@ -243,8 +245,8 @@ export async function recalculateComplianceStatus(supplierId: string): Promise<v
         newStatus = "pendente";
     }
 
-    await supabase
-        .from("carvao_suppliers")
+    await (supabase
+        .from("carvao_suppliers") as any)
         .update({ compliance_status: newStatus })
         .eq("id", supplierId);
 
@@ -501,8 +503,8 @@ export async function deleteSupplierDocument(documentId: string, supplierId: str
     }
 
     // Clear file fields but keep the document record
-    const { error } = await supabase
-        .from("carvao_supplier_documents")
+    const { error } = await (supabase
+        .from("carvao_supplier_documents") as any)
         .update({
             file_path: null,
             file_name: null,
@@ -533,13 +535,13 @@ export async function updateSupplierDocumentation(formData: FormData): Promise<{
     error?: string;
 }> {
     const supabase = await createClient();
-    
+
     const id = formData.get("id") as string;
-    
+
     if (!id) {
         return { success: false, error: "ID do fornecedor não informado" };
     }
-    
+
     const documentationData: any = {
         // Dados da Propriedade
         property_name: (formData.get("property_name") as string) || null,
@@ -547,7 +549,7 @@ export async function updateSupplierDocumentation(formData: FormData): Promise<{
         state: (formData.get("state") as string) || null,
         owner_name: (formData.get("owner_name") as string) || null,
         owner_cpf: (formData.get("owner_cpf") as string) || null,
-        
+
         // Documentos Ambientais
         dcf_number: (formData.get("dcf_number") as string) || null,
         car_number: (formData.get("car_number") as string) || null,
@@ -557,31 +559,31 @@ export async function updateSupplierDocumentation(formData: FormData): Promise<{
         dstc: (formData.get("dstc") as string) || null,
         authorized_area: (formData.get("authorized_area") as string) || null,
         species: (formData.get("species") as string) || null,
-        
+
         // Contrato
         contract_exists: formData.get("contract_exists") === "true",
         contract_signed: formData.get("contract_signed") === "true",
         contract_volume: formData.get("contract_volume") ? parseFloat(formData.get("contract_volume") as string) : null,
         contract_value: formData.get("contract_value") ? parseFloat(formData.get("contract_value") as string) : null,
-        
+
         // Arrendamento
         is_leased: formData.get("is_leased") === "true",
         intermediary_name: (formData.get("intermediary_name") as string) || null,
-        
+
         // Observações
         documentation_notes: (formData.get("documentation_notes") as string) || null,
     };
-    
-    const { error } = await supabase
-        .from("carvao_suppliers")
+
+    const { error } = await (supabase
+        .from("carvao_suppliers") as any)
         .update(documentationData)
         .eq("id", id);
-    
+
     if (error) {
         console.error("Error updating documentation:", error);
         return { success: false, error: error.message };
     }
-    
+
     revalidatePath("/carvao/fornecedores");
     return { success: true };
 }
@@ -592,19 +594,19 @@ export async function updateSupplierDocumentation(formData: FormData): Promise<{
 
 export async function getDocumentSignedUrl(supplierId: string, documentType: string): Promise<string | null> {
     const supabase = await createClient();
-    
+
     // Build expected file path
     const filePath = `${supplierId}/${documentType}.pdf`;
-    
+
     const { data, error } = await supabase.storage
         .from('carvao-supplier-documents')
         .createSignedUrl(filePath, 3600); // 1 hour
-    
+
     if (error) {
         console.error("Error generating signed URL:", error);
         return null;
     }
-    
+
     return data.signedUrl;
 }
 
@@ -622,40 +624,40 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
     signedUrl?: string;
 }> {
     const supabase = await createClient();
-    
+
     const file = formData.get("file") as File;
     const supplierId = formData.get("supplier_id") as string;
     const documentType = formData.get("document_type") as string;
-    
+
     if (!file || !supplierId || !documentType) {
         return { success: false, error: "Dados incompletos" };
     }
-    
+
     // Validate document type
     if (!DOCUMENT_TYPES.includes(documentType)) {
         return { success: false, error: "Tipo de documento inválido" };
     }
-    
+
     // Validate file type
     if (!ALLOWED_TYPES.includes(file.type)) {
         return { success: false, error: "Tipo de arquivo não permitido. Use PDF, JPG ou PNG." };
     }
-    
+
     // Validate file size
     if (file.size > MAX_SIZE) {
         return { success: false, error: "Arquivo muito grande. Máximo: 10MB" };
     }
-    
+
     // Get current user
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
         return { success: false, error: "Usuário não autenticado" };
     }
-    
+
     // File path: {supplier_id}/{document_type}.pdf
     // This will always overwrite the previous version (simple approach)
     const filePath = `${supplierId}/${documentType}.pdf`;
-    
+
     // Upload to Storage (upsert = true to replace existing)
     const { error: uploadError } = await supabase.storage
         .from('carvao-supplier-documents')
@@ -663,15 +665,15 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
             cacheControl: '3600',
             upsert: true // Replace if exists
         });
-    
+
     if (uploadError) {
         console.error("Upload error:", uploadError);
         return { success: false, error: uploadError.message };
     }
-    
+
     // Update or create document record
-    const { error: upsertError } = await supabase
-        .from("carvao_supplier_documents")
+    const { error: upsertError } = await (supabase
+        .from("carvao_supplier_documents") as any)
         .upsert({
             supplier_id: supplierId,
             document_type: documentType,
@@ -681,7 +683,7 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
         }, {
             onConflict: 'supplier_id,document_type'
         });
-    
+
     if (upsertError) {
         console.error("Upsert document record error:", upsertError);
         // Try to delete the uploaded file
@@ -690,18 +692,18 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
             .remove([filePath]);
         return { success: false, error: upsertError.message };
     }
-    
+
     // Recalculate compliance status
     await recalculateSupplierCompliance(supplierId);
-    
+
     // Generate signed URL to return
     const { data: urlData } = await supabase.storage
         .from('carvao-supplier-documents')
         .createSignedUrl(filePath, 3600);
-    
+
     revalidatePath("/carvao/fornecedores");
-    return { 
-        success: true, 
-        signedUrl: urlData?.signedUrl || undefined 
+    return {
+        success: true,
+        signedUrl: urlData?.signedUrl || undefined
     };
 }

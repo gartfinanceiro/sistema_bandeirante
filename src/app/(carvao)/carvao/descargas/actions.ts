@@ -65,8 +65,8 @@ export async function createDischarge(formData: FormData): Promise<{
 
     try {
         // Passo 1: Criar registro de descarga
-        const { data: discharge, error: dischargeError } = await supabase
-            .from("carvao_discharges")
+        const { data: discharge, error: dischargeError } = await (supabase
+            .from("carvao_discharges") as any)
             .insert({
                 schedule_id,
                 supplier_id,
@@ -94,8 +94,8 @@ export async function createDischarge(formData: FormData): Promise<{
         }
 
         // Passo 2: Atualizar agenda para status "descarregada"
-        const { error: scheduleError } = await supabase
-            .from("carvao_discharge_schedule")
+        const { error: scheduleError } = await (supabase
+            .from("carvao_discharge_schedule") as any)
             .update({ status: "descarregada" })
             .eq("id", schedule_id);
 
@@ -103,7 +103,7 @@ export async function createDischarge(formData: FormData): Promise<{
             console.error("Error updating schedule status:", scheduleError);
 
             // Rollback: deletar descarga criada
-            await supabase.from("carvao_discharges").delete().eq("id", discharge.id);
+            await (supabase.from("carvao_discharges") as any).delete().eq("id", discharge.id);
 
             return {
                 success: false,

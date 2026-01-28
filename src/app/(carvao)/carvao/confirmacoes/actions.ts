@@ -113,8 +113,8 @@ export async function confirmDischarge(formData: FormData): Promise<{
         }
     }
 
-    const { error } = await supabase
-        .from("carvao_discharges")
+    const { error } = await (supabase
+        .from("carvao_discharges") as any)
         .update(updateData)
         .eq("id", dischargeId)
         .eq("is_confirmed", false); // Extra safety: only update if not already confirmed
