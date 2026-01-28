@@ -388,8 +388,8 @@ export async function uploadDocumentFile(formData: FormData): Promise<{
     }
 
     // Update document record
-    const { error: updateError } = await supabase
-        .from("carvao_supplier_documents")
+    const { error: updateError } = await (supabase
+        .from("carvao_supplier_documents") as any)
         .update({
             file_path: filePath,
             file_name: file.name,
@@ -462,8 +462,8 @@ export async function updateSupplierDocument(formData: FormData): Promise<{
         reviewed_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
-        .from("carvao_supplier_documents")
+    const { error } = await (supabase
+        .from("carvao_supplier_documents") as any)
         .update(updateData)
         .eq("id", id);
 
@@ -496,10 +496,10 @@ export async function deleteSupplierDocument(documentId: string, supplierId: str
         .single();
 
     // Delete file from storage if exists
-    if (doc?.file_path) {
+    if ((doc as any)?.file_path) {
         await supabase.storage
             .from('carvao-documents')
-            .remove([doc.file_path]);
+            .remove([(doc as any).file_path]);
     }
 
     // Clear file fields but keep the document record
@@ -694,7 +694,7 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
     }
 
     // Recalculate compliance status
-    await recalculateSupplierCompliance(supplierId);
+    await recalculateComplianceStatus(supplierId);
 
     // Generate signed URL to return
     const { data: urlData } = await supabase.storage
