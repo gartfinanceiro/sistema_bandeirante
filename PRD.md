@@ -21,6 +21,71 @@ O **Gusa Intelligence** é um sistema de gestão interna (ERP simplificado) proj
 
 ---
 
+### 1.2 Módulo Bandeirante | Carvão
+
+> [!IMPORTANT]
+> O **Bandeirante | Carvão** é um **módulo operacional independente** que complementa o ecossistema do Sistema Bandeirante, mantendo **separação clara de responsabilidades** em relação ao core financeiro.
+
+#### Visão Geral
+
+O Bandeirante | Carvão é um sistema operacional dedicado à gestão completa do ciclo de compra e descarga de carvão vegetal, desde a negociação com fornecedores até o registro e consolidação histórica das descargas.
+
+#### Objetivos do Módulo
+
+| Objetivo | Descrição |
+|----------|-----------|
+| **Organização Comercial** | Controlar negociações ativas com fornecedores de carvão |
+| **Compliance Jurídico** | Centralizar e rastrear documentação obrigatória e contratos |
+| **Agenda Operacional** | Organizar ordem de descarga diária no pátio |
+| **Registro Confiável** | Criar base histórica mensal de descargas |
+| **Integração** | Fornecer dados operacionais ao Sistema Bandeirante (core) |
+
+#### Escopo e Responsabilidades
+
+**✅ O módulo Bandeirante | Carvão É responsável por:**
+
+- Cadastro e gestão de fornecedores de carvão
+- Controle de negociações e status comercial
+- Análise e arquivamento de documentação obrigatória
+- Gestão da agenda e ordem sequencial de descarga
+- Registro detalhado das descargas (metragem, densidade, NF, GCA)
+- Consolidação histórica mensal das operações
+- Exportação de dados operacionais para relatórios
+
+**❌ O módulo Bandeirante | Carvão NÃO:**
+
+- Calcula custos ou CPT (Custo por Tonelada)
+- Lança informações no fluxo de caixa
+- Gerencia pagamentos financeiros
+- Calcula estoque financeiro
+- Substitui o sistema financeiro principal
+- Gera relatórios financeiros estratégicos
+
+> [!NOTE]
+> **Princípio de Arquitetura:** O Bandeirante | Carvão opera como um sistema **operacional puro**, gerando eventos e dados de negócio que são consumidos pelo core financeiro quando necessário, mas sem acesso ou responsabilidade sobre cálculos financeiros, fluxo de caixa ou indicadores estratégicos.
+
+#### Integração com o Core Financeiro
+
+A integração ocorre exclusivamente através do **compartilhamento de dados operacionais e eventos de negócio**, mantendo a separação de responsabilidades:
+
+**Dados compartilhados do Carvão → Core:**
+- Eventos de descarga confirmada (fornecedor, metragem, densidade, NF, GCA)
+- Dados de fornecedores para vinculação comercial
+- Registros históricos para auditoria e rastreabilidade
+
+**O que o Core faz com esses dados:**
+- Atualiza o estoque de carvão
+- Utiliza metragem para cálculos de CPT
+- Cruza dados operacionais com transações financeiras
+- Gera indicadores estratégicos de custo
+
+**Separação clara:**
+- O módulo Carvão **não tem acesso** a fluxo de caixa, CPT ou dados financeiros estratégicos
+- Usuários do módulo Carvão (compradores, operação de pátio) **não visualizam** informações financeiras sensíveis
+- O core financeiro permanece como **única fonte de verdade** para cálculos de custo e indicadores estratégicos
+
+---
+
 ## 2. Personas e UX
 
 - **Usuário Principal:** Gestores e Sócios
