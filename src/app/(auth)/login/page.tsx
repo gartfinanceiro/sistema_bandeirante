@@ -1,11 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { signIn } from "@/app/(auth)/actions";
 
 export default function LoginPage() {
+    return (
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Carregando...</div>}>
+            <LoginForm />
+        </Suspense>
+    );
+}
+
+function LoginForm() {
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const searchParams = useSearchParams();
+    const redirectTo = searchParams.get("redirectTo") || "";
 
     async function handleSubmit(formData: FormData) {
         setIsLoading(true);
@@ -40,6 +51,7 @@ export default function LoginPage() {
                 {/* Login Form */}
                 <div className="bg-card border border-border rounded-lg p-6 shadow-lg">
                     <form action={handleSubmit} className="space-y-4">
+                        <input type="hidden" name="redirectTo" value={redirectTo} />
                         <div className="space-y-2">
                             <label
                                 htmlFor="email"

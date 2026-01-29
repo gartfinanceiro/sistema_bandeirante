@@ -2,10 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 export async function signIn(formData: FormData) {
     const supabase = await createClient();
+    const redirectTo = formData.get("redirectTo") as string | null;
 
     const data = {
         email: formData.get("email") as string,
@@ -19,7 +21,12 @@ export async function signIn(formData: FormData) {
     }
 
     revalidatePath("/", "layout");
-    redirect("/dashboard");
+
+    if (redirectTo && redirectTo.startsWith("/")) {
+        redirect(redirectTo);
+    } else {
+        redirect("/dashboard");
+    }
 }
 
 export async function signUp(formData: FormData) {
@@ -44,5 +51,13 @@ export async function signOut() {
     const supabase = await createClient();
     await supabase.auth.signOut();
     revalidatePath("/", "layout");
-    redirect("/login");
+
+    const headersList = await headers();
+    const referer = headersList.get("referer");
+
+    if (referer && referer.includes("/carvao")) {
+        redirect("/login?redirectTo=/carvao");
+    } else {
+        redirect("/login");
+    }
 }
