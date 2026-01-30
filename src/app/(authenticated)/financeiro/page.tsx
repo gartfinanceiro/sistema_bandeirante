@@ -25,6 +25,8 @@ export default function FinanceiroPage() {
     const [month, setMonth] = useState(now.getMonth() + 1);
     const [year, setYear] = useState(now.getFullYear());
     const [page, setPage] = useState(1);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
     const [activeTab, setActiveTab] = useState<"transacoes" | "relatorios" | "fiscal">("transacoes");
 
     // Data states
@@ -48,13 +50,25 @@ export default function FinanceiroPage() {
     const [editingTransaction, setEditingTransaction] = useState<TransactionRow | null>(null);
     const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
 
+    // Debounce search
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearch(searchQuery);
+            if (searchQuery !== debouncedSearch) {
+                setPage(1); // Reset to page 1 when search changes
+            }
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [searchQuery, debouncedSearch]);
+
     // Load data
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
             const [summaryData, txData, catData] = await Promise.all([
-                getMonthSummary(month, year),
-                getTransactions(month, year, page),
+                getMonthSummary(month, year, debouncedSearch),
+                getTransactions(month, year, page, 10, debouncedSearch),
                 getCategories(),
             ]);
             setSummary(summaryData);
@@ -65,7 +79,7 @@ export default function FinanceiroPage() {
         } finally {
             setIsLoading(false);
         }
-    }, [month, year, page]);
+    }, [month, year, page, debouncedSearch]);
 
     useEffect(() => {
         loadData();
@@ -215,22 +229,40 @@ export default function FinanceiroPage() {
             ) : (
                 /* Filter & Table Section */
                 <div className="space-y-4 animate-in fade-in duration-200">
-                    <div className="flex items-center gap-4">
-                        <label htmlFor="monthFilter" className="text-sm font-medium text-muted-foreground">
-                            Período:
-                        </label>
-                        <select
-                            id="monthFilter"
-                            value={`${year}-${month}`}
-                            onChange={handleMonthChange}
-                            className="h-9 px-3 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
-                        >
-                            {monthOptions.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                </option>
-                            ))}
-                        </select>
+                    <div className="flex flex-col sm:flex-row gap-4">
+                        <div className="flex items-center gap-4">
+                            <label htmlFor="monthFilter" className="text-sm font-medium text-muted-foreground whitespace-nowrap">
+                                Período:
+                            </label>
+                            <select
+                                id="monthFilter"
+                                value={`${year}-${month}`}
+                                onChange={handleMonthChange}
+                                className="h-9 px-3 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+                            >
+                                {monthOptions.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="flex-1 relative">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                            </div>
+                            <input
+                                type="text"
+                                placeholder="Buscar globalmente por descrição..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="h-9 w-full pl-9 pr-4 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+                            />
+                        </div>
                     </div>
 
                     <TransactionTable

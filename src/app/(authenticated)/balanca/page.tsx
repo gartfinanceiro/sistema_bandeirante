@@ -1,5 +1,5 @@
 import { BalancaWorkspace } from "@/components/balanca/BalancaWorkspace";
-import { getOpenPurchaseOrders } from "./actions";
+import { getOpenPurchaseOrders, getSupplierBalances } from "./actions";
 
 export const metadata = {
     title: "Balança | Gusa Intelligence",
@@ -7,10 +7,11 @@ export const metadata = {
 
 export default async function BalancaPage() {
     const orders = await getOpenPurchaseOrders();
+    const balances = await getSupplierBalances();
 
     return (
         <main className="min-h-screen bg-background">
-            <BalancaWorkspace orders={orders} />
+            <BalancaWorkspace orders={orders} balances={balances} />
         </main>
     );
 }

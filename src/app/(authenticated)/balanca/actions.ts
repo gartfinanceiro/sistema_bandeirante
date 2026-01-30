@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 export interface PurchaseOrder {
     id: string;
     date: string;
+    supplierId: string; // Added for correct aggregation
     supplierName: string;
     materialName: string;
     materialUnit: string;
@@ -15,16 +16,25 @@ export interface PurchaseOrder {
     status: string;
 }
 
+export interface SupplierBalance {
+    supplierId: string;
+    supplierName: string;
+    totalQuantity: number;
+    deliveredQuantity: number;
+    remainingQuantity: number;
+    openOrdersCount: number;
+    materials: string[];
+}
+
 export async function getOpenPurchaseOrders(): Promise<PurchaseOrder[]> {
     const supabase = await createClient();
 
     // 1. Get Transactions (Matéria Prima / Saída) that are not fully delivered
-    // Note: supplier_id is the FK column, we join via suppliers:supplier_id(...)
     const { data: transactions, error } = await supabase
         .from("transactions")
         .select(`
             id, date, amount, quantity, material_id, supplier_id, status,
-            supplier:suppliers!supplier_id ( name ),
+            supplier:suppliers!supplier_id ( id, name ),
             material:materials!material_id ( name, unit )
         `)
         .eq("type", "saida")
@@ -69,6 +79,7 @@ export async function getOpenPurchaseOrders(): Promise<PurchaseOrder[]> {
         return {
             id: t.id,
             date: t.date,
+            supplierId: t.supplier_id, // Map ID
             supplierName: t.supplier?.name || "Sem fornecedor",
             materialName: t.material?.name || "Desconhecido",
             materialUnit: t.material?.unit || "unid",
@@ -82,6 +93,41 @@ export async function getOpenPurchaseOrders(): Promise<PurchaseOrder[]> {
     // Only return orders with remaining quantity > 0
     return orders.filter(o => o.remainingQuantity > 0.1);
 }
+
+export async function getSupplierBalances(): Promise<SupplierBalance[]> {
+    const orders = await getOpenPurchaseOrders();
+    const balanceMap = new Map<string, SupplierBalance>();
+
+    for (const order of orders) {
+        if (!order.supplierId) continue;
+
+        if (!balanceMap.has(order.supplierId)) {
+            balanceMap.set(order.supplierId, {
+                supplierId: order.supplierId,
+                supplierName: order.supplierName,
+                totalQuantity: 0,
+                deliveredQuantity: 0,
+                remainingQuantity: 0,
+                openOrdersCount: 0,
+                materials: []
+            });
+        }
+
+        const entry = balanceMap.get(order.supplierId)!;
+        entry.totalQuantity += order.totalQuantity;
+        entry.deliveredQuantity += order.deliveredQuantity;
+        entry.remainingQuantity += order.remainingQuantity;
+        entry.openOrdersCount += 1;
+
+        if (!entry.materials.includes(order.materialName)) {
+            entry.materials.push(order.materialName);
+        }
+    }
+
+    // Convert map to array and sort by remaining quantity (descending)
+    return Array.from(balanceMap.values()).sort((a, b) => b.remainingQuantity - a.remainingQuantity);
+}
+
 
 export async function createInboundDelivery(formData: FormData): Promise<{ success: boolean; error?: string }> {
     const supabase = await createClient();

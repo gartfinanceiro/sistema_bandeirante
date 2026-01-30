@@ -176,20 +176,34 @@ export async function getCategories(): Promise<CategoryGroup[]> {
 // Get Month Summary
 // =============================================================================
 
+// =============================================================================
+// Get Month Summary
+// =============================================================================
+
 export async function getMonthSummary(
     month: number,
-    year: number
+    year: number,
+    search?: string
 ): Promise<MonthSummary> {
     const supabase = await createClient();
 
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const endDate = new Date(year, month, 0).toISOString().split("T")[0]; // Last day of month
 
-    const { data, error } = await supabase
+    let query = supabase
         .from("transactions")
         .select("amount, type")
         .gte("date", startDate)
         .lte("date", endDate);
+
+    // Apply search filter if present
+    // NOTE: Currently searching only by description.
+    // Structure allows robust extension to search by category name or other fields in the future.
+    if (search && search.trim() !== "") {
+        query = query.ilike("description", `%${search.trim()}%`);
+    }
+
+    const { data, error } = await query;
 
     if (error || !data) {
         console.error("Error fetching summary:", error);
@@ -339,7 +353,8 @@ export async function getTransactions(
     month: number,
     year: number,
     page: number = 1,
-    pageSize: number = 10
+    pageSize: number = 10,
+    search?: string
 ): Promise<PaginatedTransactions> {
     const supabase = await createClient();
 
@@ -348,35 +363,39 @@ export async function getTransactions(
 
     const offset = (page - 1) * pageSize;
 
-    // Get total count
-    const { count } = await supabase
+    // Base query reusable for count and data
+    // We construct it differently because .select(count) usually wants to be standalone or part of main query
+    // But since we are adding dynamic filters, it's safer to build the query chain.
+
+    // NOTE: Currently searching only by description.
+    // Structure allows robust extension to search by category name or other fields in the future.
+    let query = supabase
         .from("transactions")
-        .select("*", { count: "exact", head: true })
+        .select(`
+            id,
+            date,
+            amount,
+            type,
+            description,
+            status,
+            category:transaction_categories(
+                id,
+                name,
+                slug,
+                costCenter:cost_centers(
+                    code,
+                    name
+                )
+            )
+        `, { count: "exact" })
         .gte("date", startDate)
         .lte("date", endDate);
 
-    // Get paginated data
-    const { data, error } = await supabase
-        .from("transactions")
-        .select(`
-      id,
-      date,
-      amount,
-      type,
-      description,
-      status,
-      category:transaction_categories(
-        id,
-        name,
-        slug,
-        costCenter:cost_centers(
-          code,
-          name
-        )
-      )
-    `)
-        .gte("date", startDate)
-        .lte("date", endDate)
+    if (search && search.trim() !== "") {
+        query = query.ilike("description", `%${search.trim()}%`);
+    }
+
+    const { data, error, count } = await query
         .order("date", { ascending: false })
         .order("created_at", { ascending: false })
         .range(offset, offset + pageSize - 1);
