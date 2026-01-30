@@ -220,7 +220,7 @@ export function ExpenseDonutChart({
                                 verticalAlign="middle"
                                 align="right"
                                 wrapperStyle={{ fontSize: '12px', paddingLeft: '20px' }}
-                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                // @ts-expect-error - Recharts types are strict but payload works at runtime
                                 payload={
                                     data.slice(0, maxLegendItems).map((item) => ({
                                         id: item.name,
