@@ -4,6 +4,7 @@ interface SupplierListProps {
     suppliers: Supplier[];
     isLoading: boolean;
     onEdit: (supplier: Supplier) => void;
+    onDelete: (supplier: Supplier) => void;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -36,7 +37,7 @@ const COMPLIANCE_COLORS: Record<string, string> = {
     vencido: "bg-orange-100 text-orange-800",
 };
 
-export function SupplierList({ suppliers, isLoading, onEdit }: SupplierListProps) {
+export function SupplierList({ suppliers, isLoading, onEdit, onDelete }: SupplierListProps) {
     if (isLoading) {
         return (
             <div className="flex items-center justify-center py-12">
@@ -113,6 +114,12 @@ export function SupplierList({ suppliers, isLoading, onEdit }: SupplierListProps
                                     className="text-primary hover:underline text-sm font-medium"
                                 >
                                     Editar
+                                </button>
+                                <button
+                                    onClick={() => onDelete(supplier)}
+                                    className="ml-4 text-red-600 hover:text-red-800 hover:underline text-sm font-medium"
+                                >
+                                    Excluir
                                 </button>
                             </td>
                         </tr>

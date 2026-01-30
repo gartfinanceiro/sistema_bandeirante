@@ -1,4 +1,5 @@
 import type { Discharge } from "@/types/database";
+import { formatDateBR } from "@/lib/utils";
 
 interface PendingDischargeListProps {
     discharges: Discharge[];
@@ -61,7 +62,7 @@ export function PendingDischargeList({ discharges, isLoading, onConfirm }: Pendi
                     {discharges.map((discharge) => (
                         <tr key={discharge.id} className="border-t hover:bg-muted/50 transition-colors">
                             <td className="p-3 text-sm">
-                                {new Date(discharge.discharge_date).toLocaleDateString("pt-BR")}
+                                {formatDateBR(discharge.discharge_date)}
                             </td>
                             <td className="p-3 font-medium text-foreground">
                                 {discharge.supplier?.name || "-"}

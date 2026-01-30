@@ -112,42 +112,141 @@ export interface Database {
             carvao_discharges: {
                 Row: {
                     id: string;
-                    schedule_id: string;
-                    status: string;
-                    started_at: string | null;
-                    completed_at: string | null;
-                    actual_volume: number | null;
-                    moisture_content: number | null;
-                    impurity_content: number | null;
-                    notes: string | null;
-                    created_at: string | null;
-                    updated_at: string | null;
+                    schedule_id: string | null;
+                    supplier_id: string;
+                    discharge_date: string;
+                    truck_plate: string;
+                    invoice_number: string;
+                    gca_number: string;
+                    volume_mdc: number;
+                    density: number;
+                    weight_tons: number | null;
+                    observations: string | null;
+                    is_confirmed: boolean;
+                    confirmed_at: string | null;
+                    confirmed_by: string | null;
+                    consolidation_month: string | null;
+                    is_consolidated: boolean;
+
+                    // Operational Fields (020)
+                    impurity_percent: number | null;
+                    humidity_percent: number | null;
+                    discount_mdc: number | null;
+                    discount_kg: number | null;
+                    cargo_type: string | null;
+                    price_per_ton: number | null;
+                    gross_value: number | null;
+                    funrural_value: number | null;
+                    net_value: number | null;
+                    payment_date: string | null;
+                    meter_operator: string | null;
+                    agent_name: string | null;
+
+                    created_by: string | null;
+                    created_at: string;
+                    updated_at: string;
                 };
                 Insert: {
                     id?: string;
-                    schedule_id: string;
-                    status?: string;
-                    started_at?: string | null;
-                    completed_at?: string | null;
-                    actual_volume?: number | null;
-                    moisture_content?: number | null;
-                    impurity_content?: number | null;
-                    notes?: string | null;
-                    created_at?: string | null;
-                    updated_at?: string | null;
+                    schedule_id?: string | null;
+                    supplier_id: string;
+                    discharge_date: string;
+                    truck_plate: string;
+                    invoice_number: string;
+                    gca_number: string;
+                    volume_mdc: number;
+                    density: number;
+                    weight_tons?: number | null;
+                    observations?: string | null;
+                    is_confirmed?: boolean;
+                    confirmed_at?: string | null;
+                    confirmed_by?: string | null;
+                    consolidation_month?: string | null;
+                    is_consolidated?: boolean;
+
+                    impurity_percent?: number | null;
+                    humidity_percent?: number | null;
+                    discount_mdc?: number | null;
+                    discount_kg?: number | null;
+                    cargo_type?: string | null;
+                    price_per_ton?: number | null;
+                    gross_value?: number | null;
+                    funrural_value?: number | null;
+                    net_value?: number | null;
+                    payment_date?: string | null;
+                    meter_operator?: string | null;
+                    agent_name?: string | null;
+
+                    created_by?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
                 };
                 Update: {
                     id?: string;
-                    schedule_id?: string;
-                    status?: string;
-                    started_at?: string | null;
-                    completed_at?: string | null;
-                    actual_volume?: number | null;
-                    moisture_content?: number | null;
-                    impurity_content?: number | null;
+                    schedule_id?: string | null;
+                    supplier_id?: string;
+                    discharge_date?: string;
+                    truck_plate?: string;
+                    invoice_number?: string;
+                    gca_number?: string;
+                    volume_mdc?: number;
+                    density?: number;
+                    weight_tons?: number | null;
+                    observations?: string | null;
+                    is_confirmed?: boolean;
+                    confirmed_at?: string | null;
+                    confirmed_by?: string | null;
+                    consolidation_month?: string | null;
+                    is_consolidated?: boolean;
+
+                    impurity_percent?: number | null;
+                    humidity_percent?: number | null;
+                    discount_mdc?: number | null;
+                    discount_kg?: number | null;
+                    cargo_type?: string | null;
+                    price_per_ton?: number | null;
+                    gross_value?: number | null;
+                    funrural_value?: number | null;
+                    net_value?: number | null;
+                    payment_date?: string | null;
+                    meter_operator?: string | null;
+                    agent_name?: string | null;
+
+                    created_by?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+            };
+            carvao_monthly_closures: {
+                Row: {
+                    id: string;
+                    reference_date: string;
+                    is_closed: boolean;
+                    closed_at: string | null;
+                    closed_by: string | null;
+                    notes: string | null;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    reference_date: string;
+                    is_closed?: boolean;
+                    closed_at?: string | null;
+                    closed_by?: string | null;
                     notes?: string | null;
-                    created_at?: string | null;
-                    updated_at?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    reference_date?: string;
+                    is_closed?: boolean;
+                    closed_at?: string | null;
+                    closed_by?: string | null;
+                    notes?: string | null;
+                    created_at?: string;
+                    updated_at?: string;
                 };
             };
             materials: {
@@ -660,7 +759,25 @@ export interface Database {
             };
         };
         Views: {
-            [_ in never]: never;
+            carvao_monthly_report_view: {
+                Row: {
+                    discharge_id: string;
+                    discharge_date: string | null;
+                    month_year: string | null;
+                    supplier_name: string | null;
+                    truck_plate: string | null;
+                    invoice_number: string | null;
+                    gca_number: string | null;
+                    volume_mdc: number | null;
+                    density: number | null;
+                    moisture_content: number | null;
+                    impurity_content: number | null;
+                    observations: string | null;
+                    is_confirmed: boolean | null;
+                    created_at: string | null;
+                    updated_at: string | null;
+                };
+            };
         };
         Functions: {
             [_ in never]: never;

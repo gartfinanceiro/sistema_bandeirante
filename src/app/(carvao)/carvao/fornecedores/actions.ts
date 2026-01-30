@@ -103,6 +103,30 @@ export async function updateSupplier(formData: FormData): Promise<{
 }
 
 // =============================================================================
+// Delete Supplier (Soft Delete)
+// =============================================================================
+
+export async function deleteSupplier(id: string): Promise<{
+    success: boolean;
+    error?: string;
+}> {
+    const supabase = await createClient();
+
+    const { error } = await (supabase
+        .from("carvao_suppliers") as any)
+        .update({ is_active: false })
+        .eq("id", id);
+
+    if (error) {
+        console.error("Error deleting supplier:", error);
+        return { success: false, error: error.message };
+    }
+
+    revalidatePath("/carvao/fornecedores");
+    return { success: true };
+}
+
+// =============================================================================
 // Get Supplier Documents
 // =============================================================================
 
@@ -432,7 +456,7 @@ export async function generateDocumentSignedUrl(filePath: string): Promise<strin
     return data.signedUrl;
 }
 
-// Update document details (status, expiry, notes)
+// Update document details (status, expiry, notes, name)
 export async function updateSupplierDocument(formData: FormData): Promise<{
     success: boolean;
     error?: string;
@@ -443,6 +467,7 @@ export async function updateSupplierDocument(formData: FormData): Promise<{
     const status = formData.get("status") as string;
     const expiry_date = formData.get("expiry_date") as string;
     const notes = formData.get("notes") as string;
+    const document_name = formData.get("document_name") as string; // NEW
     const supplier_id = formData.get("supplier_id") as string;
 
     if (!id) {
@@ -461,6 +486,10 @@ export async function updateSupplierDocument(formData: FormData): Promise<{
         reviewed_by: user.id,
         reviewed_at: new Date().toISOString(),
     };
+
+    if (document_name) {
+        updateData.document_name = document_name;
+    }
 
     const { error } = await (supabase
         .from("carvao_supplier_documents") as any)
@@ -481,7 +510,7 @@ export async function updateSupplierDocument(formData: FormData): Promise<{
     return { success: true };
 }
 
-// Delete document file (but keep record)
+// Delete document file AND record (Hard Delete)
 export async function deleteSupplierDocument(documentId: string, supplierId: string): Promise<{
     success: boolean;
     error?: string;
@@ -502,17 +531,10 @@ export async function deleteSupplierDocument(documentId: string, supplierId: str
             .remove([(doc as any).file_path]);
     }
 
-    // Clear file fields but keep the document record
+    // HARD DELETE record
     const { error } = await (supabase
         .from("carvao_supplier_documents") as any)
-        .update({
-            file_path: null,
-            file_name: null,
-            file_size_bytes: null,
-            uploaded_at: null,
-            uploaded_by: null,
-            status: 'pendente',
-        })
+        .delete()
         .eq("id", documentId);
 
     if (error) {
@@ -599,7 +621,7 @@ export async function getDocumentSignedUrl(supplierId: string, documentType: str
     const filePath = `${supplierId}/${documentType}.pdf`;
 
     const { data, error } = await supabase.storage
-        .from('carvao-supplier-documents')
+        .from('carvao-documents')
         .createSignedUrl(filePath, 3600); // 1 hour
 
     if (error) {
@@ -616,7 +638,7 @@ export async function getDocumentSignedUrl(supplierId: string, documentType: str
 
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
-const DOCUMENT_TYPES = ['DOF', 'CONTRATO', 'CONTRATO_ASSINADO', 'DCF', 'CAR'];
+const DOCUMENT_TYPES = ['DOF', 'CONTRATO', 'CONTRATO_ASSINADO', 'DCF', 'CAR', 'OUTRO'];
 
 export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
     success: boolean;
@@ -628,6 +650,7 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
     const file = formData.get("file") as File;
     const supplierId = formData.get("supplier_id") as string;
     const documentType = formData.get("document_type") as string;
+    const documentName = formData.get("document_name") as string; // Optional
 
     if (!file || !supplierId || !documentType) {
         return { success: false, error: "Dados incompletos" };
@@ -654,16 +677,18 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
         return { success: false, error: "Usuário não autenticado" };
     }
 
-    // File path: {supplier_id}/{document_type}.pdf
-    // This will always overwrite the previous version (simple approach)
-    const filePath = `${supplierId}/${documentType}.pdf`;
+    // File path: {supplier_id}/{document_type}/{timestamp}_{filename}
+    // Using timestamp to avoid conflicts
+    const timestamp = Date.now();
+    const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filePath = `${supplierId}/${documentType}/${timestamp}_${sanitizedFilename}`;
 
-    // Upload to Storage (upsert = true to replace existing)
+    // Upload to Storage
     const { error: uploadError } = await supabase.storage
-        .from('carvao-supplier-documents')
+        .from('carvao-documents')
         .upload(filePath, file, {
             cacheControl: '3600',
-            upsert: true // Replace if exists
+            upsert: false
         });
 
     if (uploadError) {
@@ -671,26 +696,68 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
         return { success: false, error: uploadError.message };
     }
 
-    // Update or create document record
-    const { error: upsertError } = await (supabase
-        .from("carvao_supplier_documents") as any)
-        .upsert({
-            supplier_id: supplierId,
-            document_type: documentType,
-            file_path: filePath,
-            status: 'aprovado', // Auto-approve when file is uploaded
-            uploaded_at: new Date().toISOString(),
-        }, {
-            onConflict: 'supplier_id,document_type'
-        });
+    // Database Operation
+    // Logic:
+    // 1. If OUTRO -> Always INSERT new record (allows multiples)
+    // 2. If Standard -> Check for existing record of this type.
+    //      - If exists: UPDATE (replace file)
+    //      - If not: INSERT
 
-    if (upsertError) {
-        console.error("Upsert document record error:", upsertError);
-        // Try to delete the uploaded file
+    let dbError;
+    let existingDoc = null;
+
+    if (documentType !== 'OUTRO') {
+        // Check for existing standard document
+        const { data } = await supabase
+            .from("carvao_supplier_documents")
+            .select("id, file_path")
+            .eq("supplier_id", supplierId)
+            .eq("document_type", documentType)
+            .maybeSingle();
+        existingDoc = data;
+    }
+
+    const documentData = {
+        supplier_id: supplierId,
+        document_type: documentType,
+        document_name: documentType === 'OUTRO' ? (documentName || file.name) : null,
+        file_path: filePath,
+        file_name: file.name,
+        file_size_bytes: file.size,
+        status: 'em_analise',
+        uploaded_at: new Date().toISOString(),
+        uploaded_by: user.id
+    };
+
+    if (existingDoc) {
+        // UPDATE existing standard doc
+        // First delete old file from storage to keep it clean
+        if ((existingDoc as any).file_path) {
+            await supabase.storage
+                .from('carvao-documents')
+                .remove([(existingDoc as any).file_path]);
+        }
+
+        const { error } = await (supabase
+            .from("carvao_supplier_documents") as any)
+            .update(documentData)
+            .eq("id", (existingDoc as any).id);
+        dbError = error;
+    } else {
+        // INSERT new record (Standard or OUTRO)
+        const { error } = await (supabase
+            .from("carvao_supplier_documents") as any)
+            .insert(documentData);
+        dbError = error;
+    }
+
+    if (dbError) {
+        console.error("DB error:", dbError);
+        // Clean up uploaded file since DB failed
         await supabase.storage
-            .from('carvao-supplier-documents')
+            .from('carvao-documents')
             .remove([filePath]);
-        return { success: false, error: upsertError.message };
+        return { success: false, error: dbError.message };
     }
 
     // Recalculate compliance status
@@ -698,7 +765,7 @@ export async function uploadSupplierDocumentFile(formData: FormData): Promise<{
 
     // Generate signed URL to return
     const { data: urlData } = await supabase.storage
-        .from('carvao-supplier-documents')
+        .from('carvao-documents')
         .createSignedUrl(filePath, 3600);
 
     revalidatePath("/carvao/fornecedores");

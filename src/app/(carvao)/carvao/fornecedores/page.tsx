@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getSuppliers } from "./actions";
+import { getSuppliers, deleteSupplier } from "./actions";
 import { SupplierList } from "@/components/carvao/SupplierList";
 import { SupplierDialog } from "@/components/carvao/SupplierDialog";
 import type { Supplier } from "@/types/database";
@@ -39,6 +39,22 @@ export default function FornecedoresPage() {
         setIsDialogOpen(true);
     }
 
+    async function handleDelete(supplier: Supplier) {
+        if (!confirm(`Tem certeza que deseja excluir o fornecedor "${supplier.name}"?`)) {
+            return;
+        }
+
+        setIsLoading(true);
+        const result = await deleteSupplier(supplier.id);
+
+        if (result.success) {
+            await loadSuppliers();
+        } else {
+            alert("Erro ao excluir fornecedor: " + result.error);
+            setIsLoading(false);
+        }
+    }
+
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -63,6 +79,7 @@ export default function FornecedoresPage() {
                 suppliers={suppliers}
                 isLoading={isLoading}
                 onEdit={handleEdit}
+                onDelete={handleDelete}
             />
 
             {/* Dialog */}

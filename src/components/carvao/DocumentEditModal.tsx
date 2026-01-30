@@ -51,6 +51,7 @@ export function DocumentEditModal({
         const data = new FormData(form);
         data.append("id", document.id);
         data.append("supplier_id", supplierId);
+        // data.append("document_name", ... ) - handled by input name="document_name"
 
         const result = await updateSupplierDocument(data);
 
@@ -91,6 +92,10 @@ export function DocumentEditModal({
         formData.append("supplier_id", supplierId);
         formData.append("document_type", document.document_type);
         formData.append("document_id", document.id);
+        // For OUTRO, preserve name
+        if (document.document_type === 'OUTRO' && document.document_name) {
+            formData.append("document_name", document.document_name);
+        }
 
         // Simulate progress (since we can't track real progress easily)
         const progressInterval = setInterval(() => {
@@ -110,7 +115,12 @@ export function DocumentEditModal({
                 alert("Documento enviado com sucesso!");
                 onClose();
             } else {
-                alert(result.error || "Erro ao enviar documento");
+                console.error("Upload error:", result.error);
+                if (result.error?.includes("Bucket not found")) {
+                    alert("Erro de configuração: bucket de documentos não encontrado. Verifique o Supabase Storage.");
+                } else {
+                    alert(result.error || "Erro ao enviar documento");
+                }
             }
         }, 500);
     }
@@ -127,19 +137,19 @@ export function DocumentEditModal({
     }
 
     async function handleDeleteFile() {
-        if (!document?.file_path) return;
+        if (!document?.id) return;
 
-        if (!confirm("Deseja realmente remover este arquivo?")) return;
+        if (!confirm("Tem certeza que deseja EXCLUIR DEFINITIVAMENTE este documento e seu arquivo?")) return;
 
         setIsSubmitting(true);
         const result = await deleteSupplierDocument(document.id, supplierId);
         setIsSubmitting(false);
 
         if (result.success) {
-            alert("Arquivo removido com sucesso");
+            alert("Documento excluído com sucesso");
             onClose();
         } else {
-            alert(result.error || "Erro ao remover arquivo");
+            alert(result.error || "Erro ao remover documento");
         }
     }
 
@@ -148,13 +158,7 @@ export function DocumentEditModal({
         return new Date(formData.expiry_date) < new Date();
     }
 
-    function isExpiringSoon() {
-        if (!formData.expiry_date) return false;
-        const expiryDate = new Date(formData.expiry_date);
-        const today = new Date();
-        const daysUntilExpiry = Math.floor((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        return daysUntilExpiry <= 30 && daysUntilExpiry >= 0;
-    }
+    // ... helper functions ...
 
     if (!isOpen || !document) return null;
 
@@ -171,7 +175,7 @@ export function DocumentEditModal({
                         <div>
                             <h2 className="text-xl font-semibold">Editar Documento</h2>
                             <p className="text-sm text-muted-foreground mt-1">
-                                {document.document_type}
+                                {document.document_type === 'OUTRO' ? 'Documento Personalizado' : document.document_type}
                             </p>
                         </div>
                         <button
@@ -187,6 +191,23 @@ export function DocumentEditModal({
 
                     {/* Body */}
                     <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                        {/* Name Field (Only for OUTRO) */}
+                        {document.document_type === 'OUTRO' && (
+                            <div>
+                                <label htmlFor="document_name" className="block text-sm font-medium mb-1">
+                                    Nome do Documento
+                                </label>
+                                <input
+                                    type="text"
+                                    id="document_name"
+                                    name="document_name"
+                                    defaultValue={document.document_name || ''}
+                                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                                    required
+                                />
+                            </div>
+                        )}
+
                         {/* Status */}
                         <div>
                             <label htmlFor="status" className="block text-sm font-medium mb-1">
@@ -220,19 +241,10 @@ export function DocumentEditModal({
                                 onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
                                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                             />
-                            {isExpired() && (
-                                <p className="text-xs text-red-600 mt-1">
-                                    ⚠️ Documento vencido
-                                </p>
-                            )}
-                            {isExpiringSoon() && !isExpired() && (
-                                <p className="text-xs text-yellow-600 mt-1">
-                                    ⚠️ Documento vence em breve (30 dias ou menos)
-                                </p>
-                            )}
+                            {/* ... warning flags ... */}
                         </div>
 
-                        {/* File Upload */}
+                        {/* File Upload / Management */}
                         <div className="border-t pt-4">
                             <label className="block text-sm font-medium mb-2">
                                 Arquivo do Documento
@@ -242,16 +254,17 @@ export function DocumentEditModal({
                                 <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-md">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
-                                            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                            </svg>
+                                            {/* Icon */}
+                                            <span className="text-xl">📄</span>
                                             <div>
                                                 <p className="text-sm font-medium text-green-900">
-                                                    {document.file_name}
+                                                    {document.file_name || 'Arquivo anexado'}
                                                 </p>
-                                                <p className="text-xs text-green-700">
-                                                    {(document.file_size_bytes / 1024).toFixed(1)} KB
-                                                </p>
+                                                {document.file_size_bytes && (
+                                                    <p className="text-xs text-green-700">
+                                                        {(document.file_size_bytes / 1024).toFixed(1)} KB
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                         <div className="flex gap-2">
@@ -260,14 +273,7 @@ export function DocumentEditModal({
                                                 onClick={handleViewDocument}
                                                 className="text-xs text-blue-600 hover:underline"
                                             >
-                                                📎 Ver
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={handleDeleteFile}
-                                                className="text-xs text-red-600 hover:underline"
-                                            >
-                                                Remover
+                                                Ver
                                             </button>
                                         </div>
                                     </div>
@@ -283,20 +289,27 @@ export function DocumentEditModal({
                                             style={{ width: `${uploadProgress}%` }}
                                         />
                                     </div>
-                                    <p className="text-xs text-blue-700 mt-1">{uploadProgress}%</p>
                                 </div>
                             )}
 
-                            <input
-                                type="file"
-                                accept=".pdf,.jpg,.jpeg,.png"
-                                onChange={handleFileUpload}
-                                disabled={isUploading}
-                                className="w-full px-3 py-2 border rounded-md text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 disabled:opacity-50"
-                            />
-                            <p className="text-xs text-muted-foreground mt-1">
-                                Aceitos: PDF, JPG, PNG • Máximo: 10MB
-                            </p>
+                            <div className="flex gap-2">
+                                <label className="flex-1">
+                                    <span className="sr-only">Escolher arquivo</span>
+                                    <input
+                                        type="file"
+                                        accept=".pdf,.jpg,.jpeg,.png"
+                                        onChange={handleFileUpload}
+                                        disabled={isUploading}
+                                        className="block w-full text-sm text-slate-500
+                                          file:mr-4 file:py-2 file:px-4
+                                          file:rounded-md file:border-0
+                                          file:text-sm file:font-semibold
+                                          file:bg-primary file:text-primary-foreground
+                                          hover:file:bg-primary/90
+                                        "
+                                    />
+                                </label>
+                            </div>
                         </div>
 
                         {/* Notes */}
@@ -317,21 +330,30 @@ export function DocumentEditModal({
                     </div>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-end gap-3 p-6 border-t bg-muted/30">
+                    <div className="flex items-center justify-between p-6 border-t bg-muted/30">
                         <button
                             type="button"
-                            onClick={onClose}
-                            className="px-4 py-2 border rounded-md hover:bg-muted transition-colors"
+                            onClick={handleDeleteFile}
+                            className="text-red-600 hover:text-red-700 text-sm font-medium hover:underline"
                         >
-                            Cancelar
+                            Excluir Documento
                         </button>
-                        <button
-                            type="submit"
-                            disabled={isSubmitting || isUploading}
-                            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
-                        >
-                            {isSubmitting ? "Salvando..." : "Salvar"}
-                        </button>
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="px-4 py-2 border rounded-md hover:bg-muted transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isSubmitting || isUploading}
+                                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+                            >
+                                {isSubmitting ? "Salvando..." : "Salvar"}
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>

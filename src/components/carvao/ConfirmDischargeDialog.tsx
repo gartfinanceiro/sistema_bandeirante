@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { confirmDischarge } from "@/app/(carvao)/carvao/confirmacoes/actions";
+import { formatDateBR } from "@/lib/utils";
 import type { Discharge } from "@/types/database";
 
 interface ConfirmDischargeDialogProps {
@@ -78,11 +79,7 @@ export function ConfirmDischargeDialog({ isOpen, onClose, discharge }: ConfirmDi
                                         Data
                                     </span>
                                     <p className="text-sm font-semibold mt-1">
-                                        {new Date(discharge.discharge_date).toLocaleDateString("pt-BR", {
-                                            day: "2-digit",
-                                            month: "long",
-                                            year: "numeric",
-                                        })}
+                                        {formatDateBR(discharge.discharge_date)}
                                     </p>
                                 </div>
                                 <div>
