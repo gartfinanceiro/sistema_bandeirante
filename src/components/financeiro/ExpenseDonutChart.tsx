@@ -7,7 +7,7 @@ import { ExpenseDonutDrilldownModal } from './ExpenseDonutDrilldownModal';
 
 interface ExpenseDonutChartProps {
     categories: ReportCategory[];
-    totalExpenses: number;
+    totalValue: number;
     title?: string;
     threshold?: number; // Percent threshold for grouping (default 3)
     maxLegendItems?: number; // Max items in legend (default 8)
@@ -39,7 +39,7 @@ const OTHER_COLOR = '#94a3b8'; // Slate 400 for specific "Outros"
 
 export function ExpenseDonutChart({
     categories,
-    totalExpenses,
+    totalValue,
     title = "Distribuição de Despesas",
     threshold = 3,
     maxLegendItems = 8
@@ -78,7 +78,7 @@ export function ExpenseDonutChart({
         // 3. Create "Outros" group if needed
         if (smallCategories.length > 0) {
             const smallTotal = smallCategories.reduce((sum, cat) => sum + cat.total, 0);
-            const smallPercentage = (smallTotal / totalExpenses) * 100;
+            const smallPercentage = (smallTotal / totalValue) * 100;
 
             mainCategories.push({
                 name: "Outros",
@@ -98,7 +98,7 @@ export function ExpenseDonutChart({
             fill: item.isGrouped ? OTHER_COLOR : COLORS[index % COLORS.length]
         }));
 
-    }, [categories, totalExpenses, threshold]);
+    }, [categories, totalValue, threshold]);
 
     // Handle "Outros" click
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,7 +114,7 @@ export function ExpenseDonutChart({
         setActiveSectorIndex(index === activeSectorIndex ? undefined : index);
     };
 
-    if (totalExpenses === 0) {
+    if (totalValue === 0) {
         return (
             <div className="h-64 flex items-center justify-center text-muted-foreground bg-muted/20 rounded-lg border border-border border-dashed">
                 Sem dados para exibir
@@ -236,7 +236,7 @@ export function ExpenseDonutChart({
                 <div className="mt-4 text-center">
                     <p className="text-sm text-muted-foreground">Total</p>
                     <p className="text-2xl font-bold text-foreground">
-                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalExpenses)}
+                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalValue)}
                     </p>
                 </div>
             </div>

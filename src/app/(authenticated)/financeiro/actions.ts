@@ -63,11 +63,14 @@ export interface ReportCategory {
     }[];
 }
 
-export interface ExpenseReport {
+export interface FinancialReport {
     categories: ReportCategory[];
     macroCategories: ReportCategory[];
-    totalExpenses: number;
+    totalValue: number;
 }
+
+// Deprecated alias for backward compatibility until refactor is complete
+export type ExpenseReport = FinancialReport;
 
 export interface PaginatedTransactions {
     data: TransactionRow[];
@@ -234,7 +237,7 @@ export async function getMonthSummary(
 export async function getExpensesReport(
     month: number,
     year: number
-): Promise<ExpenseReport> {
+): Promise<FinancialReport> {
     const supabase = await createClient();
 
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
@@ -263,18 +266,18 @@ export async function getExpensesReport(
 
     if (error || !transactions) {
         console.error("Error fetching expenses report:", error);
-        return { categories: [], macroCategories: [], totalExpenses: 0 };
+        return { categories: [], macroCategories: [], totalValue: 0 };
     }
 
     // Aggregate by category AND macro-category
     const categoryMap = new Map<string, ReportCategory>();
     const macroMap = new Map<string, ReportCategory>();
-    let totalExpenses = 0;
+    let totalValue = 0;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const tx of (transactions as any[])) {
         const amount = Number(tx.amount);
-        totalExpenses += amount;
+        totalValue += amount;
 
         // 1. Category Aggregation
         const catName = tx.category?.name || "Sem Categoria";
@@ -324,7 +327,7 @@ export async function getExpensesReport(
     const processMap = (map: Map<string, ReportCategory>) => {
         const array = Array.from(map.values()).map(item => ({
             ...item,
-            percentage: totalExpenses > 0 ? (item.total / totalExpenses) * 100 : 0
+            percentage: totalValue > 0 ? (item.total / totalValue) * 100 : 0
         }));
         // Sort by Total Descending
         return array.sort((a, b) => b.total - a.total);
@@ -341,7 +344,125 @@ export async function getExpensesReport(
     return {
         categories,
         macroCategories,
-        totalExpenses
+        totalValue
+    };
+}
+
+// =============================================================================
+// Get Entries Report (Donut & Drill-down)
+// =============================================================================
+
+export async function getEntriesReport(
+    month: number,
+    year: number
+): Promise<FinancialReport> {
+    const supabase = await createClient();
+
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const endDate = new Date(year, month, 0).toISOString().split("T")[0];
+
+    // Get all ENTRADA transactions for the period
+    const { data: transactions, error } = await supabase
+        .from("transactions")
+        .select(`
+            id,
+            date,
+            amount,
+            description,
+            category:transaction_categories (
+                id,
+                name,
+                slug,
+                costCenter:cost_centers (
+                    name
+                )
+            )
+        `)
+        .eq("type", "entrada")
+        .gte("date", startDate)
+        .lte("date", endDate);
+
+    if (error || !transactions) {
+        console.error("Error fetching entries report:", error);
+        return { categories: [], macroCategories: [], totalValue: 0 };
+    }
+
+    // Aggregate by category AND macro-category
+    const categoryMap = new Map<string, ReportCategory>();
+    const macroMap = new Map<string, ReportCategory>();
+    let totalValue = 0;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const tx of (transactions as any[])) {
+        const amount = Number(tx.amount);
+        totalValue += amount;
+
+        // 1. Category Aggregation
+        const catName = tx.category?.name || "Sem Categoria";
+        const catId = tx.category?.id || "uncategorized";
+        const catSlug = tx.category?.slug || null;
+
+        if (!categoryMap.has(catId)) {
+            categoryMap.set(catId, {
+                id: catId,
+                name: catName,
+                slug: catSlug,
+                total: 0,
+                percentage: 0,
+                transactions: [],
+            });
+        }
+
+        const catEntry = categoryMap.get(catId)!;
+        catEntry.total += amount;
+        catEntry.transactions.push({
+            id: tx.id,
+            date: tx.date,
+            description: tx.description || "Sem descrição",
+            amount: amount,
+        });
+
+        // 2. Macro Aggregation (Cost Center)
+        const macroName = tx.category?.costCenter?.name || "Outros";
+        // Use name as ID for macro since we group by name
+        const macroId = macroName;
+
+        if (!macroMap.has(macroId)) {
+            macroMap.set(macroId, {
+                id: macroId,
+                name: macroName,
+                slug: null,
+                total: 0,
+                percentage: 0,
+                transactions: [],
+            });
+        }
+        const macroEntry = macroMap.get(macroId)!;
+        macroEntry.total += amount;
+    }
+
+    // Helper to process maps into sorted arrays
+    const processMap = (map: Map<string, ReportCategory>) => {
+        const array = Array.from(map.values()).map(item => ({
+            ...item,
+            percentage: totalValue > 0 ? (item.total / totalValue) * 100 : 0
+        }));
+        // Sort by Total Descending
+        return array.sort((a, b) => b.total - a.total);
+    };
+
+    const categories = processMap(categoryMap);
+    const macroCategories = processMap(macroMap);
+
+    // Sort transactions within category by date desc
+    categories.forEach(cat => {
+        cat.transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+
+    return {
+        categories,
+        macroCategories,
+        totalValue
     };
 }
 
