@@ -383,7 +383,6 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
                 plate,
                 weight_measured: newWeight,
                 weight_fiscal: newWeightFiscal,
-                weight_fiscal: newWeightFiscal,
                 driver_name: driver || null,
                 date: new Date(date + "T12:00:00Z").toISOString(), // Persistence (Noon UTC to safely allow TZ shifts)
             })
