@@ -183,50 +183,75 @@ export async function getCategories(): Promise<CategoryGroup[]> {
 // Get Month Summary
 // =============================================================================
 
+// =============================================================================
+// Get Month Summary
+// =============================================================================
+
 export async function getMonthSummary(
     month: number,
     year: number,
-    search?: string
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    search?: string // kept for signature compatibility but ignored for KPIs
 ): Promise<MonthSummary> {
     const supabase = await createClient();
 
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const endDate = new Date(year, month, 0).toISOString().split("T")[0]; // Last day of month
 
-    let query = supabase
+    // 1. Fetch Month Data (Entradas/Saídas do Mês)
+    // Strict range: startDate to endDate
+    const { data: monthData, error: monthError } = await supabase
         .from("transactions")
         .select("amount, type")
         .gte("date", startDate)
         .lte("date", endDate);
 
-    // Apply search filter if present
-    // NOTE: Currently searching only by description.
-    // Structure allows robust extension to search by category name or other fields in the future.
-    if (search && search.trim() !== "") {
-        query = query.ilike("description", `%${search.trim()}%`);
-    }
-
-    const { data, error } = await query;
-
-    if (error || !data) {
-        console.error("Error fetching summary:", error);
+    if (monthError || !monthData) {
+        console.error("Error fetching month summary:", monthError);
         return { totalEntries: 0, totalExits: 0, balance: 0 };
     }
 
-    const txData = data as { amount: number; type: string }[];
-
-    const totalEntries = txData
+    const totalEntries = (monthData as { amount: number; type: string }[])
         .filter((t) => t.type === "entrada")
         .reduce((sum, t) => sum + Number(t.amount), 0);
 
-    const totalExits = txData
+    const totalExits = (monthData as { amount: number; type: string }[])
         .filter((t) => t.type === "saida")
         .reduce((sum, t) => sum + Number(t.amount), 0);
+
+    // 2. Fetch Historical Data (Accumulated Balance)
+    // Range: All time up to endDate
+    // Note: We fetch everything to sum it up. For large datasets, this should be a DB aggregation or View.
+    // Optimization: We could fetch 'previous balance' up to startDate, but easiest reliable way without 'closings' table is sum all.
+    const { data: historyData, error: historyError } = await supabase
+        .from("transactions")
+        .select("amount, type")
+        .lte("date", endDate); // All transactions up to end of selected month
+
+    if (historyError || !historyData) {
+        console.error("Error fetching history summary:", historyError);
+        // Fallback to month balance only if history fails, or 0
+        return {
+            totalEntries,
+            totalExits,
+            balance: totalEntries - totalExits,
+        };
+    }
+
+    const historyEntries = (historyData as { amount: number; type: string }[])
+        .filter((t) => t.type === "entrada")
+        .reduce((sum, t) => sum + Number(t.amount), 0);
+
+    const historyExits = (historyData as { amount: number; type: string }[])
+        .filter((t) => t.type === "saida")
+        .reduce((sum, t) => sum + Number(t.amount), 0);
+
+    const accumulatedBalance = historyEntries - historyExits;
 
     return {
         totalEntries,
         totalExits,
-        balance: totalEntries - totalExits,
+        balance: accumulatedBalance,
     };
 }
 
