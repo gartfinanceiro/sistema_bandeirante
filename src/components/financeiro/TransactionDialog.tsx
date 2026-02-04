@@ -168,7 +168,12 @@ export function TransactionDialog({
         // Auto-reset seems safer to avoid accidental credit claiming.
         if (selectedCat) {
             const isFreight = selectedCat.name?.toLowerCase().includes("frete");
-            if (!isFreight && !isEditing) {
+            // Also check if it's a material category (which enables isPurchaseMode later)
+            // We use the same logic as isPurchaseMode roughly: checks if it has material config
+            const config = getCategoryConfig(selectedCat.slug || null);
+            const isMaterial = selectedCat.materialId || config.isMaterial;
+
+            if (!isFreight && !isMaterial && !isEditing) {
                 setHasIcmsCredit(false);
                 setIcmsRate("");
             }
@@ -470,8 +475,8 @@ export function TransactionDialog({
                             )}
 
 
-                            {/* Section: Fiscal Data (Only for Freight) */}
-                            {isFreightCategory && type === "saida" && (
+                            {/* Section: Fiscal Data (Freight or Raw Material Purchase) */}
+                            {(isFreightCategory || isPurchaseMode) && type === "saida" && (
                                 <div className="p-4 rounded-md bg-purple-50 border border-purple-100 space-y-3 animate-in fade-in slide-in-from-top-2">
                                     <h3 className="text-sm font-semibold text-purple-900 flex items-center gap-2">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
