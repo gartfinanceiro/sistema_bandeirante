@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, useMemo } from "react";
 import { createTransaction, updateTransaction, type CategoryGroup, type TransactionRow } from "@/app/(authenticated)/financeiro/actions";
 import {
     getSuppliers,
@@ -45,6 +45,19 @@ export function TransactionDialog({
     const [isPending, startTransition] = useTransition();
     const [type, setType] = useState<"entrada" | "saida">("saida");
     const [error, setError] = useState<string | null>(null);
+
+    // Filter categories based on transaction type
+    const filteredCategories = useMemo(() => {
+        const dbType = type === "entrada" ? "receita" : "despesa";
+        return categories
+            .map((group) => ({
+                ...group,
+                categories: group.categories.filter(
+                    (cat) => cat.categoryType === dbType || cat.categoryType === "ambos"
+                ),
+            }))
+            .filter((group) => group.categories.length > 0);
+    }, [categories, type]);
 
     // Smart purchase state
     const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
@@ -343,7 +356,7 @@ export function TransactionDialog({
                                 <div className="grid grid-cols-2 gap-3 p-1 bg-muted/50 rounded-lg border border-border/50">
                                     <button
                                         type="button"
-                                        onClick={() => setType("entrada")}
+                                        onClick={() => { setType("entrada"); setSelectedCategoryId(""); }}
                                         className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all duration-200 ${type === "entrada"
                                             ? "bg-white text-green-700 shadow-sm border border-green-200/50"
                                             : "text-muted-foreground hover:text-foreground hover:bg-white/50"
@@ -353,7 +366,7 @@ export function TransactionDialog({
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setType("saida")}
+                                        onClick={() => { setType("saida"); setSelectedCategoryId(""); }}
                                         className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all duration-200 ${type === "saida"
                                             ? "bg-white text-red-700 shadow-sm border border-red-200/50"
                                             : "text-muted-foreground hover:text-foreground hover:bg-white/50"
@@ -377,15 +390,19 @@ export function TransactionDialog({
                                     className="w-full h-10 px-3 rounded-md border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
                                 >
                                     <option value="">Selecione...</option>
-                                    {categories.map((group) => (
-                                        <optgroup key={group.id} label={`${group.code} - ${group.name}`}>
-                                            {group.categories.map((cat) => (
-                                                <option key={cat.id} value={cat.slug || cat.id}>
-                                                    {cat.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ))}
+                                    {filteredCategories.length === 0 ? (
+                                        <option disabled>Nenhuma categoria para este tipo</option>
+                                    ) : (
+                                        filteredCategories.map((group) => (
+                                            <optgroup key={group.id} label={`${group.code} - ${group.name}`}>
+                                                {group.categories.map((cat) => (
+                                                    <option key={cat.id} value={cat.slug || cat.id}>
+                                                        {cat.name}
+                                                    </option>
+                                                ))}
+                                            </optgroup>
+                                        ))
+                                    )}
                                 </select>
                             </div>
 

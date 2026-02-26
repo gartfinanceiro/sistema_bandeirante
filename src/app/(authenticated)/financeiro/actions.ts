@@ -18,6 +18,7 @@ export interface CategoryGroup {
         slug: string | null;
         requiresWeight: boolean;
         materialId: string | null;
+        categoryType: string;
     }[];
 }
 
@@ -104,7 +105,7 @@ export async function getCategories(): Promise<CategoryGroup[]> {
 
     const { data: categories, error: catError } = await supabase
         .from("transaction_categories")
-        .select("id, name, slug, cost_center_id, requires_weight, material_id, display_order")
+        .select("id, name, slug, cost_center_id, requires_weight, material_id, display_order, category_type")
         .eq("is_active", true)
         .order("display_order");
 
@@ -126,7 +127,7 @@ export async function getCategories(): Promise<CategoryGroup[]> {
 
     // Group categories by cost center
     const grouped: CategoryGroup[] = (costCenters as { id: string; code: string; name: string; display_order: number }[]).map((cc) => {
-        let ccCategories = (categories as { id: string; name: string; cost_center_id: string; requires_weight: boolean | null; material_id: string | null }[])
+        let ccCategories = (categories as { id: string; name: string; cost_center_id: string; requires_weight: boolean | null; material_id: string | null; category_type?: string }[])
             .filter((cat) => cat.cost_center_id === cc.id)
             .map((cat) => ({
                 id: cat.id,
@@ -135,6 +136,7 @@ export async function getCategories(): Promise<CategoryGroup[]> {
                 slug: (cat as any).slug,
                 requiresWeight: cat.requires_weight || false,
                 materialId: cat.material_id,
+                categoryType: cat.category_type || "despesa",
             }));
 
         // Inject Materials into "OD" (Operacional Direto) group
@@ -146,6 +148,7 @@ export async function getCategories(): Promise<CategoryGroup[]> {
                 slug: `material_${mat.id}`, // Custom slug format
                 requiresWeight: true, // Materials usually require weight
                 materialId: mat.id,
+                categoryType: "despesa", // Materials are always expense purchases
             }));
 
             // Create a Set of existing category names for O(1) lookup
