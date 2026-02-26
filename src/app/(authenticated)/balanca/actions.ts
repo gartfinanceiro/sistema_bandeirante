@@ -257,7 +257,6 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
             weight_measured: weight,
             weight_fiscal: weightFiscal,
             driver_name: driver,
-            vehicle_type: "truck", // default
             date: new Date(date + "T12:00:00Z").toISOString()
         });
 
