@@ -41,64 +41,69 @@ export async function getAdvances(filters?: {
     status?: string;
     supplierId?: string;
 }): Promise<AdvanceListItem[]> {
-    const supabase = await createClient();
+    try {
+        const supabase = await createClient();
 
-    let query = (supabase.from("carvao_advances") as any)
-        .select(`
-            id,
-            status,
-            advance_amount,
-            advance_date,
-            discharge_id,
-            discharge_date,
-            total_calculated_value,
-            price_per_ton_used,
-            complement_amount,
-            complement_date,
-            notes,
-            supplier:supplier_id(name),
-            carvao_supplier:carvao_supplier_id(name),
-            advance_transaction:advance_transaction_id(description),
-            discharge:discharge_id(weight_tons, volume_mdc)
-        `)
-        .order("advance_date", { ascending: false });
+        let query = (supabase.from("carvao_advances") as any)
+            .select(`
+                id,
+                status,
+                advance_amount,
+                advance_date,
+                discharge_id,
+                discharge_date,
+                total_calculated_value,
+                price_per_ton_used,
+                complement_amount,
+                complement_date,
+                notes,
+                supplier:supplier_id(name),
+                carvao_supplier:carvao_supplier_id(name),
+                advance_transaction:advance_transaction_id(description),
+                discharge:discharge_id(weight_tons, volume_mdc)
+            `)
+            .order("advance_date", { ascending: false });
 
-    if (filters?.status) {
-        query = query.eq("status", filters.status);
-    }
-    if (filters?.supplierId) {
-        query = query.eq("supplier_id", filters.supplierId);
-    }
+        if (filters?.status) {
+            query = query.eq("status", filters.status);
+        }
+        if (filters?.supplierId) {
+            query = query.eq("supplier_id", filters.supplierId);
+        }
 
-    const { data, error } = await query;
+        const { data, error } = await query;
 
-    if (error) {
-        console.error("Error fetching advances:", error);
+        if (error) {
+            console.error("Error fetching advances:", error);
+            return [];
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (data || []).map((a: any) => ({
+            id: a.id,
+            status: a.status,
+            advance_amount: Number(a.advance_amount),
+            advance_date: a.advance_date,
+            supplier_name: a.supplier?.name || null,
+            carvao_supplier_name: a.carvao_supplier?.name || null,
+            discharge_id: a.discharge_id,
+            discharge_date: a.discharge_date,
+            discharge_weight_tons: a.discharge?.weight_tons ? Number(a.discharge.weight_tons) : null,
+            discharge_volume_mdc: a.discharge?.volume_mdc ? Number(a.discharge.volume_mdc) : null,
+            total_calculated_value: a.total_calculated_value ? Number(a.total_calculated_value) : null,
+            price_per_ton_used: a.price_per_ton_used ? Number(a.price_per_ton_used) : null,
+            complement_amount: a.complement_amount ? Number(a.complement_amount) : null,
+            complement_date: a.complement_date,
+            advance_transaction_description: a.advance_transaction?.description || null,
+            notes: a.notes,
+            pending_balance: a.total_calculated_value
+                ? Number(a.total_calculated_value) - Number(a.advance_amount)
+                : null,
+        }));
+    } catch (err) {
+        console.error("Error in getAdvances:", err);
         return [];
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data || []).map((a: any) => ({
-        id: a.id,
-        status: a.status,
-        advance_amount: Number(a.advance_amount),
-        advance_date: a.advance_date,
-        supplier_name: a.supplier?.name || null,
-        carvao_supplier_name: a.carvao_supplier?.name || null,
-        discharge_id: a.discharge_id,
-        discharge_date: a.discharge_date,
-        discharge_weight_tons: a.discharge?.weight_tons ? Number(a.discharge.weight_tons) : null,
-        discharge_volume_mdc: a.discharge?.volume_mdc ? Number(a.discharge.volume_mdc) : null,
-        total_calculated_value: a.total_calculated_value ? Number(a.total_calculated_value) : null,
-        price_per_ton_used: a.price_per_ton_used ? Number(a.price_per_ton_used) : null,
-        complement_amount: a.complement_amount ? Number(a.complement_amount) : null,
-        complement_date: a.complement_date,
-        advance_transaction_description: a.advance_transaction?.description || null,
-        notes: a.notes,
-        pending_balance: a.total_calculated_value
-            ? Number(a.total_calculated_value) - Number(a.advance_amount)
-            : null,
-    }));
 }
 
 // =============================================================================
@@ -156,18 +161,23 @@ export async function getPendingAdvancesForSupplier(
 // =============================================================================
 
 export async function getCarvaoSuppliersForAdvance(): Promise<CarvaoSupplierOption[]> {
-    const supabase = await createClient();
+    try {
+        const supabase = await createClient();
 
-    const { data } = await supabase
-        .from("carvao_suppliers")
-        .select("id, name")
-        .eq("is_active", true)
-        .order("name");
+        const { data } = await supabase
+            .from("carvao_suppliers")
+            .select("id, name")
+            .eq("is_active", true)
+            .order("name");
 
-    if (!data) return [];
+        if (!data) return [];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data as any[]).map(s => ({ id: s.id, name: s.name }));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (data as any[]).map(s => ({ id: s.id, name: s.name }));
+    } catch (err) {
+        console.error("Error in getCarvaoSuppliersForAdvance:", err);
+        return [];
+    }
 }
 
 // =============================================================================

@@ -106,9 +106,9 @@ export function TransactionDialog({
     // Load suppliers on mount
     useEffect(() => {
         if (isOpen) {
-            getSuppliers(true).then(setSuppliers);
-            getCarvaoSuppliersForAdvance().then(setCarvaoSuppliers);
-            getPendingAdvancesAll().then(setPendingAdvances);
+            getSuppliers(true).then(setSuppliers).catch(() => {});
+            getCarvaoSuppliersForAdvance().then(setCarvaoSuppliers).catch(() => {});
+            getPendingAdvancesAll().then(setPendingAdvances).catch(() => setPendingAdvances([]));
         }
     }, [isOpen]);
 
