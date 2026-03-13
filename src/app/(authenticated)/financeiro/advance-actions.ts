@@ -300,3 +300,109 @@ export async function createComplementPayment(params: {
 export async function getAdvancesPendingComplement(): Promise<AdvanceListItem[]> {
     return getAdvances({ status: "descarregado" });
 }
+
+// =============================================================================
+// Get all pending advances (adiantamento_pago) for complement payment
+// Used in TransactionDialog when user wants to pay complement + enter volume
+// =============================================================================
+
+export async function getPendingAdvancesAll(): Promise<AdvanceListItem[]> {
+    return getAdvances({ status: "adiantamento_pago" });
+}
+
+// =============================================================================
+// Finalize advance with complement: pay complement + enter volume + update stock
+// Goes from adiantamento_pago → finalizado in one step
+// =============================================================================
+
+export async function finalizeAdvanceWithComplement(params: {
+    advanceId: string;
+    complementTransactionId: string;
+    complementAmount: number;
+    complementDate: string;
+    volumeMdc: number;
+    density: number;
+    pricePerTon: number;
+}): Promise<{ success: boolean; error?: string }> {
+    const supabase = await createClient();
+
+    // 1. Get the advance to verify status and get supplier info
+    const { data: advance, error: advError } = await (supabase.from("carvao_advances") as any)
+        .select("id, status, advance_amount, carvao_supplier_id, supplier_id")
+        .eq("id", params.advanceId)
+        .single();
+
+    if (advError || !advance) {
+        return { success: false, error: "Adiantamento não encontrado" };
+    }
+
+    if (advance.status !== "adiantamento_pago") {
+        return { success: false, error: "Adiantamento já foi processado" };
+    }
+
+    // 2. Calculate weight and total value
+    const weightTons = params.volumeMdc * params.density;
+    const totalCalculatedValue = weightTons * params.pricePerTon;
+
+    // 3. Update advance record → finalizado
+    const { error: updateError } = await (supabase.from("carvao_advances") as any)
+        .update({
+            complement_transaction_id: params.complementTransactionId,
+            complement_amount: params.complementAmount,
+            complement_date: params.complementDate,
+            total_calculated_value: totalCalculatedValue,
+            price_per_ton_used: params.pricePerTon,
+            status: "finalizado",
+        })
+        .eq("id", params.advanceId)
+        .eq("status", "adiantamento_pago");
+
+    if (updateError) {
+        console.error("Error finalizing advance:", updateError);
+        return { success: false, error: updateError.message };
+    }
+
+    // 4. Update charcoal stock
+    try {
+        // Find charcoal material
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: material } = await (supabase
+            .from("materials")
+            .select("id, current_stock")
+            .or("name.ilike.%carvão%,name.ilike.%carvao%")
+            .limit(1)
+            .single() as any);
+
+        if (material) {
+            const currentStock = Number(material.current_stock) || 0;
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (supabase.from("materials") as any)
+                .update({ current_stock: currentStock + weightTons })
+                .eq("id", material.id);
+
+            // Create inventory movement
+            const totalValue = Number(advance.advance_amount) + params.complementAmount;
+            const unitPrice = weightTons > 0 ? totalValue / weightTons : 0;
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (supabase.from("inventory_movements") as any).insert({
+                material_id: material.id,
+                date: params.complementDate,
+                quantity: weightTons,
+                unit_price: unitPrice,
+                total_value: totalValue,
+                movement_type: "compra",
+                reference_id: params.complementTransactionId,
+                notes: `Complemento de adiantamento - ${params.volumeMdc.toFixed(1)} MDC × ${params.density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+            });
+        }
+    } catch (err) {
+        console.error("Stock update error during advance finalization:", err);
+        // Don't fail the whole operation - advance was already finalized
+    }
+
+    revalidatePath("/financeiro");
+    revalidatePath("/estoque");
+    return { success: true };
+}

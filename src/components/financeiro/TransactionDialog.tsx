@@ -12,7 +12,10 @@ import { type VisualMaterialType } from "@/app/(authenticated)/estoque/utils";
 import {
     getCarvaoSuppliersForAdvance,
     createAdvancePayment,
+    getPendingAdvancesAll,
+    finalizeAdvanceWithComplement,
     type CarvaoSupplierOption,
+    type AdvanceListItem,
 } from "@/app/(authenticated)/financeiro/advance-actions";
 
 interface TransactionDialogProps {
@@ -90,6 +93,14 @@ export function TransactionDialog({
     const [carvaoSuppliers, setCarvaoSuppliers] = useState<CarvaoSupplierOption[]>([]);
     const [selectedCarvaoSupplierId, setSelectedCarvaoSupplierId] = useState<string>("");
 
+    // Complement payment (complemento) fields
+    const [isComplement, setIsComplement] = useState(false);
+    const [pendingAdvances, setPendingAdvances] = useState<AdvanceListItem[]>([]);
+    const [selectedAdvanceId, setSelectedAdvanceId] = useState<string>("");
+    const [volumeMdc, setVolumeMdc] = useState<string>("");
+    const [density, setDensity] = useState<string>("0.280");
+    const [pricePerTon, setPricePerTon] = useState<string>("");
+
     const isEditing = !!initialData;
 
     // Load suppliers on mount
@@ -97,6 +108,7 @@ export function TransactionDialog({
         if (isOpen) {
             getSuppliers(true).then(setSuppliers);
             getCarvaoSuppliersForAdvance().then(setCarvaoSuppliers);
+            getPendingAdvancesAll().then(setPendingAdvances);
         }
     }, [isOpen]);
 
@@ -243,6 +255,21 @@ export function TransactionDialog({
             (c.id === selectedCategoryId || c.slug === selectedCategoryId) && c.slug === "raw_material_charcoal"
         ) !== undefined;
 
+    // Complement calculations
+    const selectedAdvance = pendingAdvances.find(a => a.id === selectedAdvanceId);
+    const calcWeightTons = volumeMdc && density ? parseFloat(volumeMdc) * parseFloat(density) : 0;
+    const calcTotalValue = calcWeightTons && pricePerTon ? calcWeightTons * parseFloat(pricePerTon) : 0;
+    const calcComplementAmount = selectedAdvance && calcTotalValue > 0
+        ? calcTotalValue - selectedAdvance.advance_amount
+        : 0;
+
+    // Auto-fill complement amount
+    useEffect(() => {
+        if (isComplement && calcComplementAmount > 0) {
+            setAmount(calcComplementAmount.toFixed(2));
+        }
+    }, [isComplement, calcComplementAmount]);
+
     // Check if selected category is Logistics/Freight
     const selectedCategoryName = categories
         .flatMap(g => g.categories)
@@ -269,6 +296,34 @@ export function TransactionDialog({
                     onClose();
                 } else {
                     setError(result.error || "Erro ao atualizar transação");
+                }
+            } else if (isComplement && isCharcoalCategory && selectedAdvanceId) {
+                // Complement payment: create transaction + finalize advance + update stock
+                formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
+                formData.set("icmsRate", icmsRate);
+
+                const txResult = await createTransaction(formData);
+                if (txResult.success && txResult.transactionId) {
+                    const compResult = await finalizeAdvanceWithComplement({
+                        advanceId: selectedAdvanceId,
+                        complementTransactionId: txResult.transactionId,
+                        complementAmount: parseFloat(amount),
+                        complementDate: date,
+                        volumeMdc: parseFloat(volumeMdc),
+                        density: parseFloat(density),
+                        pricePerTon: parseFloat(pricePerTon),
+                    });
+                    if (compResult.success) {
+                        resetForm();
+                        onClose();
+                    } else {
+                        setError(compResult.error || "Transação criada, mas erro ao finalizar adiantamento");
+                    }
+                } else if (txResult.success) {
+                    resetForm();
+                    onClose();
+                } else {
+                    setError(txResult.error || "Erro ao criar transação");
                 }
             } else if (isPurchaseMode && isAdvance && isCharcoalCategory) {
                 // Charcoal advance: create transaction (no stock) + advance record
@@ -347,6 +402,11 @@ export function TransactionDialog({
         setIcmsRate("");
         setIsAdvance(false);
         setSelectedCarvaoSupplierId("");
+        setIsComplement(false);
+        setSelectedAdvanceId("");
+        setVolumeMdc("");
+        setDensity("0.280");
+        setPricePerTon("");
         setError(null);
     }
 
@@ -453,7 +513,7 @@ export function TransactionDialog({
                             </div>
 
                             {/* Smart Purchase Mode Banner */}
-                            {isPurchaseMode && !isAdvance && (
+                            {isPurchaseMode && !isAdvance && !isComplement && (
                                 <div className="p-3 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
                                     <p className="font-medium">Compra de Matéria-Prima Detectada</p>
                                     <p className="text-xs mt-1 text-blue-400/80">
@@ -462,50 +522,183 @@ export function TransactionDialog({
                                 </div>
                             )}
 
-                            {/* Charcoal Advance Option */}
-                            {isPurchaseMode && isCharcoalCategory && (
-                                <div className={`p-3 rounded-md border text-sm space-y-2 ${isAdvance
-                                    ? "bg-amber-500/10 border-amber-500/20"
-                                    : "bg-muted/30 border-border"
-                                }`}>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={isAdvance}
-                                            onChange={(e) => setIsAdvance(e.target.checked)}
-                                            className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-                                        />
-                                        <span className={`font-medium ${isAdvance ? "text-amber-600" : "text-foreground"}`}>
-                                            Adiantamento de Carvão
-                                        </span>
-                                    </label>
-                                    {isAdvance && (
-                                        <div className="space-y-2">
-                                            <p className="text-xs text-amber-500/80">
-                                                O estoque <strong>não</strong> será atualizado. O volume será medido na descarga futura.
-                                            </p>
-                                            <div className="space-y-1">
-                                                <label className="text-xs font-medium text-amber-600">
-                                                    Fornecedor Carvão (operacional)
-                                                </label>
-                                                <select
-                                                    value={selectedCarvaoSupplierId}
-                                                    onChange={(e) => setSelectedCarvaoSupplierId(e.target.value)}
-                                                    className="w-full h-9 px-2 rounded-md border border-amber-300 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-                                                >
-                                                    <option value="">Selecione fornecedor (opcional)...</option>
-                                                    {carvaoSuppliers.map(s => (
-                                                        <option key={s.id} value={s.id}>{s.name}</option>
-                                                    ))}
-                                                </select>
+                            {/* Charcoal Mode Selection: Advance or Complement */}
+                            {!isEditing && type === "saida" && isCharcoalCategory && (
+                                <div className="space-y-2">
+                                    {/* Advance option */}
+                                    <div className={`p-3 rounded-md border text-sm space-y-2 ${isAdvance
+                                        ? "bg-amber-500/10 border-amber-500/20"
+                                        : "bg-muted/30 border-border"
+                                    }`}>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={isAdvance}
+                                                onChange={(e) => {
+                                                    setIsAdvance(e.target.checked);
+                                                    if (e.target.checked) setIsComplement(false);
+                                                }}
+                                                className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                            />
+                                            <span className={`font-medium ${isAdvance ? "text-amber-600" : "text-foreground"}`}>
+                                                Adiantamento de Carvão
+                                            </span>
+                                        </label>
+                                        {isAdvance && (
+                                            <div className="space-y-2">
+                                                <p className="text-xs text-amber-500/80">
+                                                    O estoque <strong>não</strong> será atualizado. O volume será medido na descarga futura.
+                                                </p>
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-medium text-amber-600">
+                                                        Fornecedor Carvão (operacional)
+                                                    </label>
+                                                    <select
+                                                        value={selectedCarvaoSupplierId}
+                                                        onChange={(e) => setSelectedCarvaoSupplierId(e.target.value)}
+                                                        className="w-full h-9 px-2 rounded-md border border-amber-300 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                                    >
+                                                        <option value="">Selecione fornecedor (opcional)...</option>
+                                                        {carvaoSuppliers.map(s => (
+                                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
                                             </div>
+                                        )}
+                                    </div>
+
+                                    {/* Complement option */}
+                                    {pendingAdvances.length > 0 && (
+                                        <div className={`p-3 rounded-md border text-sm space-y-3 ${isComplement
+                                            ? "bg-emerald-500/10 border-emerald-500/20"
+                                            : "bg-muted/30 border-border"
+                                        }`}>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isComplement}
+                                                    onChange={(e) => {
+                                                        setIsComplement(e.target.checked);
+                                                        if (e.target.checked) setIsAdvance(false);
+                                                    }}
+                                                    className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                />
+                                                <span className={`font-medium ${isComplement ? "text-emerald-600" : "text-foreground"}`}>
+                                                    Complemento de Adiantamento
+                                                </span>
+                                            </label>
+                                            {isComplement && (
+                                                <div className="space-y-3">
+                                                    <p className="text-xs text-emerald-600/80">
+                                                        Pague a diferença e informe a metragem descarregada. O estoque será atualizado.
+                                                    </p>
+
+                                                    {/* Select advance */}
+                                                    <div className="space-y-1">
+                                                        <label className="text-xs font-medium text-emerald-700">
+                                                            Adiantamento
+                                                        </label>
+                                                        <select
+                                                            value={selectedAdvanceId}
+                                                            onChange={(e) => setSelectedAdvanceId(e.target.value)}
+                                                            className="w-full h-9 px-2 rounded-md border border-emerald-300 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                        >
+                                                            <option value="">Selecione adiantamento...</option>
+                                                            {pendingAdvances.map(a => (
+                                                                <option key={a.id} value={a.id}>
+                                                                    {a.advance_date} — R$ {a.advance_amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                                                    {a.carvao_supplier_name ? ` (${a.carvao_supplier_name})` : ""}
+                                                                    {a.supplier_name ? ` (${a.supplier_name})` : ""}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+
+                                                    {selectedAdvanceId && (
+                                                        <>
+                                                            {/* Volume and density */}
+                                                            <div className="grid grid-cols-2 gap-2">
+                                                                <div className="space-y-1">
+                                                                    <label className="text-xs font-medium text-emerald-700">
+                                                                        Volume (MDC)
+                                                                    </label>
+                                                                    <input
+                                                                        type="number"
+                                                                        step="0.1"
+                                                                        min="0"
+                                                                        value={volumeMdc}
+                                                                        onChange={(e) => setVolumeMdc(e.target.value)}
+                                                                        placeholder="Ex: 150"
+                                                                        className="w-full h-9 px-2 rounded-md border border-emerald-300 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <label className="text-xs font-medium text-emerald-700">
+                                                                        Densidade (t/MDC)
+                                                                    </label>
+                                                                    <input
+                                                                        type="number"
+                                                                        step="0.001"
+                                                                        min="0"
+                                                                        value={density}
+                                                                        onChange={(e) => setDensity(e.target.value)}
+                                                                        placeholder="0.280"
+                                                                        className="w-full h-9 px-2 rounded-md border border-emerald-300 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                                    />
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Price per ton */}
+                                                            <div className="space-y-1">
+                                                                <label className="text-xs font-medium text-emerald-700">
+                                                                    Preço por Tonelada (R$/t)
+                                                                </label>
+                                                                <input
+                                                                    type="number"
+                                                                    step="0.01"
+                                                                    min="0"
+                                                                    value={pricePerTon}
+                                                                    onChange={(e) => setPricePerTon(e.target.value)}
+                                                                    placeholder="Ex: 850.00"
+                                                                    className="w-full h-9 px-2 rounded-md border border-emerald-300 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                                />
+                                                            </div>
+
+                                                            {/* Calculation summary */}
+                                                            {calcWeightTons > 0 && calcTotalValue > 0 && selectedAdvance && (
+                                                                <div className="p-2 rounded bg-emerald-50 border border-emerald-200 text-xs space-y-1">
+                                                                    <div className="flex justify-between">
+                                                                        <span className="text-emerald-700">Peso calculado:</span>
+                                                                        <span className="font-medium">{calcWeightTons.toFixed(2)} t</span>
+                                                                    </div>
+                                                                    <div className="flex justify-between">
+                                                                        <span className="text-emerald-700">Valor total da carga:</span>
+                                                                        <span className="font-medium">R$ {calcTotalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                                                    </div>
+                                                                    <div className="flex justify-between">
+                                                                        <span className="text-emerald-700">Adiantamento pago:</span>
+                                                                        <span className="font-medium">- R$ {selectedAdvance.advance_amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                                                    </div>
+                                                                    <div className="flex justify-between border-t border-emerald-200 pt-1 mt-1">
+                                                                        <span className="text-emerald-800 font-semibold">Complemento a pagar:</span>
+                                                                        <span className="font-bold text-emerald-800">
+                                                                            R$ {calcComplementAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
                             )}
 
-                            {/* Supplier (only for raw materials) */}
-                            {isPurchaseMode && (
+                            {/* Supplier (only for raw materials, not complement) */}
+                            {isPurchaseMode && !isComplement && (
                                 <div className="space-y-2">
                                     <label htmlFor="supplierId" className="text-sm font-medium text-foreground">
                                         Fornecedor
@@ -530,7 +723,7 @@ export function TransactionDialog({
                             {/* Amount */}
                             <div className="space-y-2">
                                 <label htmlFor="amount" className="text-sm font-medium text-foreground">
-                                    Valor (R$)
+                                    {isComplement && selectedAdvanceId ? "Valor do Complemento (R$)" : "Valor (R$)"}
                                 </label>
                                 <input
                                     id="amount"
@@ -541,13 +734,14 @@ export function TransactionDialog({
                                     required
                                     value={amount}
                                     onChange={(e) => setAmount(e.target.value)}
+                                    readOnly={isComplement && calcComplementAmount > 0}
                                     placeholder="0,00"
-                                    className="w-full h-10 px-3 rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+                                    className={`w-full h-10 px-3 rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-colors ${isComplement && calcComplementAmount > 0 ? "bg-muted/50" : ""}`}
                                 />
                             </div>
 
-                            {/* Quantity (Hybrid: Auto-calc or Manual) — hidden for advance */}
-                            {isPurchaseMode && !isAdvance && selectedSupplierId && amount && (
+                            {/* Quantity (Hybrid: Auto-calc or Manual) — hidden for advance/complement */}
+                            {isPurchaseMode && !isAdvance && !isComplement && selectedSupplierId && amount && (
                                 <div className="space-y-2 p-3 rounded-md bg-muted/50 border border-border">
                                     <div className="flex items-center justify-between">
                                         <label htmlFor="quantity" className="text-sm font-medium text-foreground">
@@ -623,8 +817,8 @@ export function TransactionDialog({
                                 </div>
                             )}
 
-                            {/* Stock Info Alert (Replacing Auto-Stock) — hidden for advance */}
-                            {isPurchaseMode && !isAdvance && (
+                            {/* Stock Info Alert — hidden for advance/complement */}
+                            {isPurchaseMode && !isAdvance && !isComplement && (
                                 <div className="p-3 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
                                     <p className="font-medium flex items-center gap-2">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -706,7 +900,7 @@ export function TransactionDialog({
                                     disabled={isPending}
                                     className="flex-1 h-10 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                 >
-                                    {isPending ? "Salvando..." : isEditing ? "Atualizar" : isAdvance ? "Salvar Adiantamento" : isPurchaseMode && addToStock ? "Salvar + Estoque" : "Salvar"}
+                                    {isPending ? "Salvando..." : isEditing ? "Atualizar" : isComplement ? "Pagar Complemento" : isAdvance ? "Salvar Adiantamento" : isPurchaseMode && addToStock ? "Salvar + Estoque" : "Salvar"}
                                 </button>
                             </div>
                         </form >
