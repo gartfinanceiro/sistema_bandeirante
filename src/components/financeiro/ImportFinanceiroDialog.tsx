@@ -238,7 +238,7 @@ function parseSpreadsheetData(
                 transactions.push({
                     day: block.day,
                     date: isoDate,
-                    description: rawDesc,
+                    description: toTitleCase(rawDesc),
                     amount,
                     type,
                     status: rawStatus || "Pago",
@@ -249,6 +249,12 @@ function parseSpreadsheetData(
     }
 
     return transactions;
+}
+
+function toTitleCase(text: string): string {
+    return text
+        .toLowerCase()
+        .replace(/(^|\s|-)\S/g, (char) => char.toUpperCase());
 }
 
 function parseMonetaryValue(raw: string): number {
@@ -318,6 +324,7 @@ export function ImportFinanceiroDialog({
     const [categories, setCategories] = useState<CategoryOption[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [categoryOverrides, setCategoryOverrides] = useState<Map<number, string>>(new Map());
+    const [descriptionOverrides, setDescriptionOverrides] = useState<Map<number, string>>(new Map());
     const [importResult, setImportResult] = useState<SheetImportResult | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -340,6 +347,7 @@ export function ImportFinanceiroDialog({
             setCategories([]);
             setSelectedIds(new Set());
             setCategoryOverrides(new Map());
+            setDescriptionOverrides(new Map());
             setImportResult(null);
             setError(null);
             setSuppliers([]);
@@ -441,7 +449,7 @@ export function ImportFinanceiroDialog({
                     const purchase = purchaseOverrides.get(idx);
                     return {
                         date: tx.date,
-                        description: tx.description,
+                        description: descriptionOverrides.get(idx) || tx.description,
                         amount: tx.amount,
                         type: tx.type,
                         status: tx.status,
@@ -549,11 +557,12 @@ export function ImportFinanceiroDialog({
     // Filter transactions for review
     const filteredTransactions = matchedTransactions
         .map((tx, idx) => ({ tx, idx }))
-        .filter(({ tx }) => {
+        .filter(({ tx, idx }) => {
             if (filterType !== "all" && tx.type !== filterType) return false;
             if (filterConfidence === "none" && tx.matchConfidence !== "none") return false;
             if (filterConfidence === "low" && tx.matchConfidence !== "low" && tx.matchConfidence !== "none") return false;
-            if (searchFilter && !tx.description.toLowerCase().includes(searchFilter.toLowerCase())) return false;
+            const desc = descriptionOverrides.get(idx) || tx.description;
+            if (searchFilter && !desc.toLowerCase().includes(searchFilter.toLowerCase())) return false;
             return true;
         });
 
@@ -844,9 +853,18 @@ export function ImportFinanceiroDialog({
                                                                         {tx.type === "entrada" ? "E" : "S"}
                                                                     </span>
 
-                                                                    {/* Description */}
+                                                                    {/* Description (editable) */}
                                                                     <div className="flex-1 min-w-0">
-                                                                        <p className="truncate text-foreground">{tx.description}</p>
+                                                                        <input
+                                                                            type="text"
+                                                                            value={descriptionOverrides.get(idx) ?? tx.description}
+                                                                            onChange={(e) => setDescriptionOverrides(prev => {
+                                                                                const next = new Map(prev);
+                                                                                next.set(idx, e.target.value);
+                                                                                return next;
+                                                                            })}
+                                                                            className="w-full bg-transparent text-foreground text-sm border-b border-transparent hover:border-border focus:border-primary focus:outline-none truncate py-0.5 transition-colors"
+                                                                        />
                                                                         <div className="flex items-center gap-2 mt-0.5">
                                                                             <span className="text-xs text-muted-foreground">
                                                                                 {tx.section === "carvao" ? "Carvão" : tx.section === "outros" ? "Outros" : "Principal"}
