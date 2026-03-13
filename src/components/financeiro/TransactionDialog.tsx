@@ -239,23 +239,7 @@ export function TransactionDialog({
         }
     }, [selectedSupplierId, amount, suppliers]);
 
-    if (!isOpen) return null;
-
-    const filteredSuppliers = materialId
-        ? suppliers.filter((s) => s.materialId === materialId)
-        : suppliers;
-
-    // Purchase mode only enabled for creation, or potentially edit if valid?
-    // For simplicity, stock logic usually applies on creation. 
-    // If editing a historical transaction, re-triggering stock logic is complex.
-    // We'll disable "Purchase Mode" features (stock add) in Edit Mode for safety unless requested.
-    const isPurchaseMode = !isEditing && type === "saida" && materialType !== null;
-    const isCharcoalCategory = selectedCategoryId === "raw_material_charcoal" ||
-        categories.flatMap(g => g.categories).find(c =>
-            (c.id === selectedCategoryId || c.slug === selectedCategoryId) && c.slug === "raw_material_charcoal"
-        ) !== undefined;
-
-    // Complement calculations
+    // Complement calculations (must be before early return so hook count is stable)
     const selectedAdvance = pendingAdvances.find(a => a.id === selectedAdvanceId);
     const calcWeightTons = volumeMdc && density ? parseFloat(volumeMdc) * parseFloat(density) : 0;
     const calcTotalValue = calcWeightTons && pricePerTon ? calcWeightTons * parseFloat(pricePerTon) : 0;
@@ -269,6 +253,22 @@ export function TransactionDialog({
             setAmount(calcComplementAmount.toFixed(2));
         }
     }, [isComplement, calcComplementAmount]);
+
+    if (!isOpen) return null;
+
+    const filteredSuppliers = materialId
+        ? suppliers.filter((s) => s.materialId === materialId)
+        : suppliers;
+
+    // Purchase mode only enabled for creation, or potentially edit if valid?
+    // For simplicity, stock logic usually applies on creation.
+    // If editing a historical transaction, re-triggering stock logic is complex.
+    // We'll disable "Purchase Mode" features (stock add) in Edit Mode for safety unless requested.
+    const isPurchaseMode = !isEditing && type === "saida" && materialType !== null;
+    const isCharcoalCategory = selectedCategoryId === "raw_material_charcoal" ||
+        categories.flatMap(g => g.categories).find(c =>
+            (c.id === selectedCategoryId || c.slug === selectedCategoryId) && c.slug === "raw_material_charcoal"
+        ) !== undefined;
 
     // Check if selected category is Logistics/Freight
     const selectedCategoryName = categories
