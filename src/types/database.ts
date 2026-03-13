@@ -936,6 +936,46 @@ export interface Discharge {
     };
 }
 
+// =============================================================================
+// Carvão Advances (Adiantamentos)
+// =============================================================================
+
+export type CarvaoAdvanceStatus = 'adiantamento_pago' | 'descarregado' | 'finalizado';
+
+export interface CarvaoAdvance {
+    id: string;
+    carvao_supplier_id: string | null;
+    supplier_id: string | null;
+    status: CarvaoAdvanceStatus;
+
+    // Adiantamento
+    advance_transaction_id: string;
+    advance_amount: number;
+    advance_date: string;
+
+    // Descarga
+    discharge_id: string | null;
+    discharge_date: string | null;
+    total_calculated_value: number | null;
+    price_per_ton_used: number | null;
+
+    // Complemento
+    complement_transaction_id: string | null;
+    complement_amount: number | null;
+    complement_date: string | null;
+
+    notes: string | null;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+
+    // Joined fields
+    carvao_supplier?: { name: string };
+    supplier?: { name: string };
+    advance_transaction?: { description: string; amount: number; date: string };
+    discharge?: { volume_mdc: number; density: number; weight_tons: number; discharge_date: string };
+}
+
 export interface SupplierDocument {
     id: string;
     supplier_id: string;

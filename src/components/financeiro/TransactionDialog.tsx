@@ -9,6 +9,11 @@ import {
     type Supplier
 } from "@/app/(authenticated)/estoque/actions";
 import { type VisualMaterialType } from "@/app/(authenticated)/estoque/utils";
+import {
+    getCarvaoSuppliersForAdvance,
+    createAdvancePayment,
+    type CarvaoSupplierOption,
+} from "@/app/(authenticated)/financeiro/advance-actions";
 
 interface TransactionDialogProps {
     isOpen: boolean;
@@ -80,12 +85,18 @@ export function TransactionDialog({
     const [hasIcmsCredit, setHasIcmsCredit] = useState(false);
     const [icmsRate, setIcmsRate] = useState<string>("");
 
+    // Advance payment (adiantamento) fields
+    const [isAdvance, setIsAdvance] = useState(false);
+    const [carvaoSuppliers, setCarvaoSuppliers] = useState<CarvaoSupplierOption[]>([]);
+    const [selectedCarvaoSupplierId, setSelectedCarvaoSupplierId] = useState<string>("");
+
     const isEditing = !!initialData;
 
     // Load suppliers on mount
     useEffect(() => {
         if (isOpen) {
             getSuppliers(true).then(setSuppliers);
+            getCarvaoSuppliersForAdvance().then(setCarvaoSuppliers);
         }
     }, [isOpen]);
 
@@ -227,6 +238,10 @@ export function TransactionDialog({
     // If editing a historical transaction, re-triggering stock logic is complex.
     // We'll disable "Purchase Mode" features (stock add) in Edit Mode for safety unless requested.
     const isPurchaseMode = !isEditing && type === "saida" && materialType !== null;
+    const isCharcoalCategory = selectedCategoryId === "raw_material_charcoal" ||
+        categories.flatMap(g => g.categories).find(c =>
+            (c.id === selectedCategoryId || c.slug === selectedCategoryId) && c.slug === "raw_material_charcoal"
+        ) !== undefined;
 
     // Check if selected category is Logistics/Freight
     const selectedCategoryName = categories
@@ -254,6 +269,35 @@ export function TransactionDialog({
                     onClose();
                 } else {
                     setError(result.error || "Erro ao atualizar transação");
+                }
+            } else if (isPurchaseMode && isAdvance && isCharcoalCategory) {
+                // Charcoal advance: create transaction (no stock) + advance record
+                formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
+                formData.set("icmsRate", icmsRate);
+
+                const txResult = await createTransaction(formData);
+                if (txResult.success && txResult.transactionId) {
+                    // Create advance record
+                    const advResult = await createAdvancePayment({
+                        advanceTransactionId: txResult.transactionId,
+                        advanceAmount: parseFloat(amount),
+                        advanceDate: date,
+                        supplierId: selectedSupplierId || null,
+                        carvaoSupplierId: selectedCarvaoSupplierId || null,
+                        notes: description ? `Adiantamento: ${description}` : null,
+                    });
+                    if (advResult.success) {
+                        resetForm();
+                        onClose();
+                    } else {
+                        setError(advResult.error || "Transação criada, mas erro ao registrar adiantamento");
+                    }
+                } else if (txResult.success) {
+                    // Transaction created but no ID returned - still close
+                    resetForm();
+                    onClose();
+                } else {
+                    setError(txResult.error || "Erro ao criar transação");
                 }
             } else if (isPurchaseMode && addToStock) {
                 // Use purchase transaction (creates financial + stock entry)
@@ -301,6 +345,8 @@ export function TransactionDialog({
         setAddToStock(true);
         setHasIcmsCredit(false);
         setIcmsRate("");
+        setIsAdvance(false);
+        setSelectedCarvaoSupplierId("");
         setError(null);
     }
 
@@ -407,12 +453,54 @@ export function TransactionDialog({
                             </div>
 
                             {/* Smart Purchase Mode Banner */}
-                            {isPurchaseMode && (
+                            {isPurchaseMode && !isAdvance && (
                                 <div className="p-3 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
-                                    <p className="font-medium">💡 Compra de Matéria-Prima Detectada</p>
+                                    <p className="font-medium">Compra de Matéria-Prima Detectada</p>
                                     <p className="text-xs mt-1 text-blue-400/80">
                                         O sistema pode atualizar automaticamente o estoque.
                                     </p>
+                                </div>
+                            )}
+
+                            {/* Charcoal Advance Option */}
+                            {isPurchaseMode && isCharcoalCategory && (
+                                <div className={`p-3 rounded-md border text-sm space-y-2 ${isAdvance
+                                    ? "bg-amber-500/10 border-amber-500/20"
+                                    : "bg-muted/30 border-border"
+                                }`}>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={isAdvance}
+                                            onChange={(e) => setIsAdvance(e.target.checked)}
+                                            className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                        />
+                                        <span className={`font-medium ${isAdvance ? "text-amber-600" : "text-foreground"}`}>
+                                            Adiantamento de Carvão
+                                        </span>
+                                    </label>
+                                    {isAdvance && (
+                                        <div className="space-y-2">
+                                            <p className="text-xs text-amber-500/80">
+                                                O estoque <strong>não</strong> será atualizado. O volume será medido na descarga futura.
+                                            </p>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-amber-600">
+                                                    Fornecedor Carvão (operacional)
+                                                </label>
+                                                <select
+                                                    value={selectedCarvaoSupplierId}
+                                                    onChange={(e) => setSelectedCarvaoSupplierId(e.target.value)}
+                                                    className="w-full h-9 px-2 rounded-md border border-amber-300 bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                                >
+                                                    <option value="">Selecione fornecedor (opcional)...</option>
+                                                    {carvaoSuppliers.map(s => (
+                                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -458,8 +546,8 @@ export function TransactionDialog({
                                 />
                             </div>
 
-                            {/* Quantity (Hybrid: Auto-calc or Manual) */}
-                            {isPurchaseMode && selectedSupplierId && amount && (
+                            {/* Quantity (Hybrid: Auto-calc or Manual) — hidden for advance */}
+                            {isPurchaseMode && !isAdvance && selectedSupplierId && amount && (
                                 <div className="space-y-2 p-3 rounded-md bg-muted/50 border border-border">
                                     <div className="flex items-center justify-between">
                                         <label htmlFor="quantity" className="text-sm font-medium text-foreground">
@@ -535,8 +623,8 @@ export function TransactionDialog({
                                 </div>
                             )}
 
-                            {/* Stock Info Alert (Replacing Auto-Stock) */}
-                            {isPurchaseMode && (
+                            {/* Stock Info Alert (Replacing Auto-Stock) — hidden for advance */}
+                            {isPurchaseMode && !isAdvance && (
                                 <div className="p-3 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
                                     <p className="font-medium flex items-center gap-2">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -618,7 +706,7 @@ export function TransactionDialog({
                                     disabled={isPending}
                                     className="flex-1 h-10 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                 >
-                                    {isPending ? "Salvando..." : isEditing ? "Atualizar" : isPurchaseMode && addToStock ? "Salvar + Estoque" : "Salvar"}
+                                    {isPending ? "Salvando..." : isEditing ? "Atualizar" : isAdvance ? "Salvar Adiantamento" : isPurchaseMode && addToStock ? "Salvar + Estoque" : "Salvar"}
                                 </button>
                             </div>
                         </form >

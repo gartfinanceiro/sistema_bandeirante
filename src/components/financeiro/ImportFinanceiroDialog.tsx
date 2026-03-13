@@ -19,11 +19,13 @@ import type {
     CategoryOption,
     SheetImportResult,
     SupplierOption,
+    CarvaoSupplierOption,
 } from "@/app/(authenticated)/financeiro/import-actions";
 import {
     matchTransactionsWithCategories,
     getImportCategories,
     getImportSuppliers,
+    getImportCarvaoSuppliers,
     importSheetTransactions,
 } from "@/app/(authenticated)/financeiro/import-actions";
 
@@ -300,6 +302,8 @@ interface PurchaseData {
     quantity: string;
     hasIcmsCredit: boolean;
     icmsRate: string;
+    isAdvance: boolean;
+    carvaoSupplierId: string;
 }
 
 export function ImportFinanceiroDialog({
@@ -330,6 +334,7 @@ export function ImportFinanceiroDialog({
 
     // Suppliers + per-transaction purchase data
     const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+    const [carvaoSuppliers, setCarvaoSuppliers] = useState<CarvaoSupplierOption[]>([]);
     const [purchaseOverrides, setPurchaseOverrides] = useState<Map<number, PurchaseData>>(new Map());
     const [expandedPurchaseRows, setExpandedPurchaseRows] = useState<Set<number>>(new Set());
 
@@ -351,6 +356,7 @@ export function ImportFinanceiroDialog({
             setImportResult(null);
             setError(null);
             setSuppliers([]);
+            setCarvaoSuppliers([]);
             setPurchaseOverrides(new Map());
             setExpandedPurchaseRows(new Set());
             setFilterType("all");
@@ -394,15 +400,17 @@ export function ImportFinanceiroDialog({
             }
 
             // 4. Match categories + load suppliers (server actions)
-            const [matched, cats, sups] = await Promise.all([
+            const [matched, cats, sups, carvaoSups] = await Promise.all([
                 matchTransactionsWithCategories(parsed),
                 getImportCategories(),
                 getImportSuppliers(),
+                getImportCarvaoSuppliers(),
             ]);
 
             setMatchedTransactions(matched);
             setCategories(cats);
             setSuppliers(sups);
+            setCarvaoSuppliers(carvaoSups);
 
             // Auto-expand purchase rows for raw material matches
             const autoExpandPurchase = new Set<number>();
@@ -458,6 +466,8 @@ export function ImportFinanceiroDialog({
                         quantity: purchase?.quantity ? parseFloat(purchase.quantity) : null,
                         hasIcmsCredit: purchase?.hasIcmsCredit || false,
                         icmsRate: purchase?.hasIcmsCredit && purchase?.icmsRate ? parseFloat(purchase.icmsRate) : null,
+                        isAdvance: purchase?.isAdvance || false,
+                        carvaoSupplierId: purchase?.carvaoSupplierId || null,
                     };
                 });
 
@@ -530,7 +540,7 @@ export function ImportFinanceiroDialog({
     const updatePurchaseData = (idx: number, field: keyof PurchaseData, value: string | boolean) => {
         setPurchaseOverrides(prev => {
             const next = new Map(prev);
-            const current = next.get(idx) || { supplierId: "", quantity: "", hasIcmsCredit: false, icmsRate: "" };
+            const current = next.get(idx) || { supplierId: "", quantity: "", hasIcmsCredit: false, icmsRate: "", isAdvance: false, carvaoSupplierId: "" };
             next.set(idx, { ...current, [field]: value });
             return next;
         });
@@ -873,7 +883,9 @@ export function ImportFinanceiroDialog({
                                                                                 <span className="text-xs text-muted-foreground">• {tx.status}</span>
                                                                             )}
                                                                             {isPurchaseRow && (
-                                                                                <span className="text-xs font-medium text-purple-600 dark:text-purple-400">• Matéria-Prima</span>
+                                                                                <span className={`text-xs font-medium ${purchase?.isAdvance ? "text-amber-600 dark:text-amber-400" : "text-purple-600 dark:text-purple-400"}`}>
+                                                                                    • {purchase?.isAdvance ? "Adiantamento Carvão" : "Matéria-Prima"}
+                                                                                </span>
                                                                             )}
                                                                         </div>
                                                                     </div>
@@ -936,19 +948,49 @@ export function ImportFinanceiroDialog({
 
                                                                 {/* Purchase details sub-row */}
                                                                 {isPurchaseRow && isExpPurchase && (
-                                                                    <div className="px-3 pb-3 pt-1 ml-8 mr-3 mb-1 bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-md space-y-2">
-                                                                        <p className="text-xs font-semibold text-purple-700 dark:text-purple-400 flex items-center gap-1.5">
-                                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
-                                                                            {materialInfo.isCharcoal ? "Compra Carvão (estoque imediato)" : "Compra Matéria-Prima (Balança)"}
-                                                                        </p>
+                                                                    <div className={`px-3 pb-3 pt-1 ml-8 mr-3 mb-1 rounded-md space-y-2 ${purchase?.isAdvance
+                                                                        ? "bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800"
+                                                                        : "bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800"
+                                                                    }`}>
+                                                                        <div className="flex items-center justify-between">
+                                                                            <p className={`text-xs font-semibold flex items-center gap-1.5 ${purchase?.isAdvance ? "text-amber-700 dark:text-amber-400" : "text-purple-700 dark:text-purple-400"}`}>
+                                                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                                                                                {purchase?.isAdvance
+                                                                                    ? "Adiantamento Carvão (sem estoque)"
+                                                                                    : materialInfo.isCharcoal
+                                                                                        ? "Compra Carvão (estoque imediato)"
+                                                                                        : "Compra Matéria-Prima (Balança)"}
+                                                                            </p>
+                                                                            {/* Advance toggle — only for charcoal */}
+                                                                            {materialInfo.isCharcoal && (
+                                                                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        checked={purchase?.isAdvance || false}
+                                                                                        onChange={(e) => updatePurchaseData(idx, "isAdvance", e.target.checked)}
+                                                                                        className="w-3.5 h-3.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                                                                    />
+                                                                                    <span className="text-xs text-amber-700 dark:text-amber-400 font-semibold">Adiantamento</span>
+                                                                                </label>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {/* Advance info banner */}
+                                                                        {purchase?.isAdvance && (
+                                                                            <div className="bg-amber-100 dark:bg-amber-900/30 rounded px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-300">
+                                                                                Adiantamento: o estoque <strong>não</strong> será atualizado agora. O volume será medido na descarga futura.
+                                                                                Após a descarga, será possível registrar o complemento.
+                                                                            </div>
+                                                                        )}
+
                                                                         <div className="grid grid-cols-2 gap-2">
-                                                                            {/* Supplier */}
+                                                                            {/* Supplier (financial) */}
                                                                             <div>
-                                                                                <label className="text-xs text-purple-700 dark:text-purple-400 font-medium">Fornecedor</label>
+                                                                                <label className={`text-xs font-medium ${purchase?.isAdvance ? "text-amber-700 dark:text-amber-400" : "text-purple-700 dark:text-purple-400"}`}>Fornecedor (Financeiro)</label>
                                                                                 <select
                                                                                     value={purchase?.supplierId || ""}
                                                                                     onChange={(e) => handleSupplierChange(idx, e.target.value)}
-                                                                                    className="w-full h-7 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                                                                    className={`w-full h-7 px-2 rounded border bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 ${purchase?.isAdvance ? "border-amber-200 dark:border-amber-700 focus:ring-amber-500" : "border-purple-200 dark:border-purple-700 focus:ring-purple-500"}`}
                                                                                 >
                                                                                     <option value="">Selecione...</option>
                                                                                     {filteredSuppliers.map(s => (
@@ -958,19 +1000,36 @@ export function ImportFinanceiroDialog({
                                                                                     ))}
                                                                                 </select>
                                                                             </div>
-                                                                            {/* Quantity */}
-                                                                            <div>
-                                                                                <label className="text-xs text-purple-700 dark:text-purple-400 font-medium">Quantidade (t)</label>
-                                                                                <input
-                                                                                    type="number"
-                                                                                    step="0.01"
-                                                                                    min="0"
-                                                                                    value={purchase?.quantity || ""}
-                                                                                    onChange={(e) => updatePurchaseData(idx, "quantity", e.target.value)}
-                                                                                    placeholder="Ex: 30.00"
-                                                                                    className="w-full h-7 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
-                                                                                />
-                                                                            </div>
+                                                                            {/* Carvao Supplier (operational) — only for advance */}
+                                                                            {purchase?.isAdvance ? (
+                                                                                <div>
+                                                                                    <label className="text-xs text-amber-700 dark:text-amber-400 font-medium">Fornecedor (Carvão)</label>
+                                                                                    <select
+                                                                                        value={purchase?.carvaoSupplierId || ""}
+                                                                                        onChange={(e) => updatePurchaseData(idx, "carvaoSupplierId", e.target.value)}
+                                                                                        className="w-full h-7 px-2 rounded border border-amber-200 dark:border-amber-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                                                                    >
+                                                                                        <option value="">Selecione...</option>
+                                                                                        {carvaoSuppliers.map(s => (
+                                                                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                                                                        ))}
+                                                                                    </select>
+                                                                                </div>
+                                                                            ) : (
+                                                                                /* Quantity — only for non-advance */
+                                                                                <div>
+                                                                                    <label className="text-xs text-purple-700 dark:text-purple-400 font-medium">Quantidade (t)</label>
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        step="0.01"
+                                                                                        min="0"
+                                                                                        value={purchase?.quantity || ""}
+                                                                                        onChange={(e) => updatePurchaseData(idx, "quantity", e.target.value)}
+                                                                                        placeholder="Ex: 30.00"
+                                                                                        className="w-full h-7 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                                                                    />
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                         {/* ICMS */}
                                                                         <div className="flex items-center gap-3">
@@ -979,9 +1038,9 @@ export function ImportFinanceiroDialog({
                                                                                     type="checkbox"
                                                                                     checked={purchase?.hasIcmsCredit || false}
                                                                                     onChange={(e) => updatePurchaseData(idx, "hasIcmsCredit", e.target.checked)}
-                                                                                    className="w-3.5 h-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                                                                    className={`w-3.5 h-3.5 rounded border-gray-300 focus:ring-purple-500 ${purchase?.isAdvance ? "text-amber-600" : "text-purple-600"}`}
                                                                                 />
-                                                                                <span className="text-xs text-purple-700 dark:text-purple-400 font-medium">ICMS</span>
+                                                                                <span className={`text-xs font-medium ${purchase?.isAdvance ? "text-amber-700 dark:text-amber-400" : "text-purple-700 dark:text-purple-400"}`}>ICMS</span>
                                                                             </label>
                                                                             {purchase?.hasIcmsCredit && (
                                                                                 <input
@@ -991,15 +1050,17 @@ export function ImportFinanceiroDialog({
                                                                                     value={purchase?.icmsRate || ""}
                                                                                     onChange={(e) => updatePurchaseData(idx, "icmsRate", e.target.value)}
                                                                                     placeholder="Alíquota %"
-                                                                                    className="h-7 w-24 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                                                                    className={`h-7 w-24 px-2 rounded border bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 ${purchase?.isAdvance ? "border-amber-200 dark:border-amber-700 focus:ring-amber-500" : "border-purple-200 dark:border-purple-700 focus:ring-purple-500"}`}
                                                                                 />
                                                                             )}
                                                                         </div>
                                                                         {/* Info note */}
-                                                                        <p className="text-[10px] text-purple-500 dark:text-purple-500">
-                                                                            {materialInfo.isCharcoal
-                                                                                ? "Carvão: estoque atualizado imediatamente ao importar."
-                                                                                : "Minério/Fundentes: aparecerá como pedido na Balança. Estoque atualizado na descarga."}
+                                                                        <p className={`text-[10px] ${purchase?.isAdvance ? "text-amber-500" : "text-purple-500"}`}>
+                                                                            {purchase?.isAdvance
+                                                                                ? "Adiantamento: sem estoque. Volume medido na descarga. Complemento pago depois."
+                                                                                : materialInfo.isCharcoal
+                                                                                    ? "Carvão: estoque atualizado imediatamente ao importar."
+                                                                                    : "Minério/Fundentes: aparecerá como pedido na Balança. Estoque atualizado na descarga."}
                                                                         </p>
                                                                     </div>
                                                                 )}

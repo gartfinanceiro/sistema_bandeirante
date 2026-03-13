@@ -576,6 +576,7 @@ export async function getTransactions(
 export async function createTransaction(formData: FormData): Promise<{
     success: boolean;
     error?: string;
+    transactionId?: string;
 }> {
     const supabase = await createClient();
 
@@ -625,7 +626,7 @@ export async function createTransaction(formData: FormData): Promise<{
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase.from("transactions") as any).insert({
+    const { data: insertedTx, error } = await (supabase.from("transactions") as any).insert({
         type,
         amount,
         date,
@@ -635,7 +636,7 @@ export async function createTransaction(formData: FormData): Promise<{
         material_id: finalMaterialId,
         has_icms_credit: hasIcmsCredit,
         icms_rate: hasIcmsCredit ? icmsRate : 0,
-    });
+    }).select("id").single();
 
     if (error) {
         console.error("Error creating transaction:", error);
@@ -643,7 +644,7 @@ export async function createTransaction(formData: FormData): Promise<{
     }
 
     revalidatePath("/financeiro");
-    return { success: true };
+    return { success: true, transactionId: insertedTx?.id };
 }
 
 // =============================================================================

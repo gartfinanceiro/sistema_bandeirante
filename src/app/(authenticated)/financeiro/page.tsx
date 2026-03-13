@@ -9,6 +9,7 @@ import { CategoryManagerDialog } from "@/components/financeiro/CategoryManagerDi
 import { FinancialAnalysisView } from "@/components/financeiro/FinancialAnalysisView";
 import { FiscalDashboard } from "@/components/financeiro/FiscalDashboard";
 import { ImportFinanceiroDialog } from "@/components/financeiro/ImportFinanceiroDialog";
+import { AdvanceTrackerDialog } from "@/components/financeiro/AdvanceTrackerDialog";
 import {
     getCategories,
     getMonthSummary,
@@ -51,6 +52,7 @@ export default function FinanceiroPage() {
     const [editingTransaction, setEditingTransaction] = useState<TransactionRow | null>(null);
     const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
     const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+    const [isAdvanceDialogOpen, setIsAdvanceDialogOpen] = useState(false);
 
     // Debounce search
     useEffect(() => {
@@ -146,6 +148,15 @@ export default function FinanceiroPage() {
                     <p className="text-muted-foreground">Gestão de fluxo de caixa</p>
                 </div>
                 <div className="flex gap-2">
+                    <button
+                        onClick={() => setIsAdvanceDialogOpen(true)}
+                        className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 font-medium hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Adiantamentos
+                    </button>
                     <button
                         onClick={() => setIsImportDialogOpen(true)}
                         className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md border border-border text-foreground font-medium hover:bg-accent transition-colors"
@@ -311,6 +322,15 @@ export default function FinanceiroPage() {
                 onImportComplete={() => {
                     setIsImportDialogOpen(false);
                     loadData(); // Refresh data
+                }}
+            />
+
+            {/* Advance Tracker Dialog */}
+            <AdvanceTrackerDialog
+                isOpen={isAdvanceDialogOpen}
+                onClose={() => {
+                    setIsAdvanceDialogOpen(false);
+                    loadData(); // Refresh in case complement was paid
                 }}
             />
         </div>

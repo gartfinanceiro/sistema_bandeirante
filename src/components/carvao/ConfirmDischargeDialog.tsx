@@ -1,9 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { confirmDischarge } from "@/app/(carvao)/carvao/confirmacoes/actions";
 import { formatDateBR } from "@/lib/utils";
 import type { Discharge } from "@/types/database";
+import {
+    getPendingAdvancesForSupplier,
+    linkDischargeToAdvance,
+    type AdvanceListItem,
+} from "@/app/(authenticated)/financeiro/advance-actions";
 
 interface ConfirmDischargeDialogProps {
     isOpen: boolean;
@@ -13,6 +18,22 @@ interface ConfirmDischargeDialogProps {
 
 export function ConfirmDischargeDialog({ isOpen, onClose, discharge }: ConfirmDischargeDialogProps) {
     const [isConfirming, setIsConfirming] = useState(false);
+    const [pendingAdvances, setPendingAdvances] = useState<AdvanceListItem[]>([]);
+    const [selectedAdvanceId, setSelectedAdvanceId] = useState<string>("");
+    const [advancePricePerTon, setAdvancePricePerTon] = useState<string>("");
+    const [loadingAdvances, setLoadingAdvances] = useState(false);
+
+    // Load pending advances for this supplier when dialog opens
+    useEffect(() => {
+        if (isOpen && discharge?.supplier_id) {
+            setLoadingAdvances(true);
+            setSelectedAdvanceId("");
+            setAdvancePricePerTon("");
+            getPendingAdvancesForSupplier(discharge.supplier_id)
+                .then(setPendingAdvances)
+                .finally(() => setLoadingAdvances(false));
+        }
+    }, [isOpen, discharge?.supplier_id]);
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
@@ -25,16 +46,35 @@ export function ConfirmDischargeDialog({ isOpen, onClose, discharge }: ConfirmDi
 
         const result = await confirmDischarge(formData);
 
-        setIsConfirming(false);
-
         if (result.success) {
+            // If an advance was selected, link it to this discharge
+            if (selectedAdvanceId && advancePricePerTon) {
+                const pricePerTon = parseFloat(advancePricePerTon);
+                if (pricePerTon > 0) {
+                    await linkDischargeToAdvance({
+                        advanceId: selectedAdvanceId,
+                        dischargeId: discharge.id,
+                        pricePerTon,
+                    });
+                }
+            }
+
+            setIsConfirming(false);
             onClose();
         } else {
+            setIsConfirming(false);
             alert(result.error || "Erro ao confirmar descarga");
         }
     }
 
     if (!isOpen || !discharge) return null;
+
+    // Calculate estimated values for selected advance
+    const selectedAdvance = pendingAdvances.find(a => a.id === selectedAdvanceId);
+    const pricePerTon = parseFloat(advancePricePerTon) || 0;
+    const totalValue = pricePerTon > 0 ? discharge.weight_tons * pricePerTon : 0;
+    const advanceAmount = selectedAdvance?.advance_amount || 0;
+    const complementNeeded = totalValue > 0 ? totalValue - advanceAmount : 0;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -336,6 +376,102 @@ export function ConfirmDischargeDialog({ isOpen, onClose, discharge }: ConfirmDi
                                 </div>
                             </div>
                         </div>
+
+                        {/* ✏️ GRUPO 5: Vinculação de Adiantamento */}
+                        {pendingAdvances.length > 0 && (
+                            <div className="border border-amber-200 dark:border-amber-800 rounded-lg p-4 bg-amber-50 dark:bg-amber-950/20">
+                                <h3 className="text-base font-semibold mb-3 text-amber-900 dark:text-amber-100 flex items-center gap-2">
+                                    <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    Adiantamentos em Aberto
+                                </h3>
+                                <p className="text-xs text-amber-700 dark:text-amber-400 mb-3">
+                                    Existem adiantamentos pagos para este fornecedor. Vincule um à descarga para calcular o complemento.
+                                </p>
+
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="block text-sm font-medium text-amber-800 dark:text-amber-200 mb-1">
+                                            Selecionar Adiantamento
+                                        </label>
+                                        <select
+                                            value={selectedAdvanceId}
+                                            onChange={(e) => setSelectedAdvanceId(e.target.value)}
+                                            className="w-full px-3 py-2 border border-amber-300 dark:border-amber-700 rounded-md bg-white dark:bg-background focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                        >
+                                            <option value="">Nenhum (sem adiantamento)</option>
+                                            {pendingAdvances.map(adv => (
+                                                <option key={adv.id} value={adv.id}>
+                                                    {formatDateBR(adv.advance_date)} — R$ {adv.advance_amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                                    {adv.advance_transaction_description ? ` — ${adv.advance_transaction_description}` : ""}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {selectedAdvanceId && (
+                                        <>
+                                            <div>
+                                                <label className="block text-sm font-medium text-amber-800 dark:text-amber-200 mb-1">
+                                                    Preço por Tonelada (R$/ton)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0"
+                                                    value={advancePricePerTon}
+                                                    onChange={(e) => setAdvancePricePerTon(e.target.value)}
+                                                    placeholder="Ex: 1500.00"
+                                                    className="w-full px-3 py-2 border border-amber-300 dark:border-amber-700 rounded-md bg-white dark:bg-background focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                                />
+                                            </div>
+
+                                            {pricePerTon > 0 && (
+                                                <div className="grid grid-cols-3 gap-3 bg-amber-100 dark:bg-amber-900/30 rounded-lg p-3">
+                                                    <div className="text-center">
+                                                        <span className="text-xs text-amber-700 dark:text-amber-400 uppercase font-medium block">
+                                                            Valor Total
+                                                        </span>
+                                                        <p className="text-lg font-bold text-amber-900 dark:text-amber-100">
+                                                            R$ {totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                                        </p>
+                                                        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                                            {discharge.weight_tons.toFixed(3)}t x R$ {pricePerTon.toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <span className="text-xs text-amber-700 dark:text-amber-400 uppercase font-medium block">
+                                                            Adiantamento
+                                                        </span>
+                                                        <p className="text-lg font-bold text-green-700 dark:text-green-400">
+                                                            - R$ {advanceAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <span className="text-xs text-amber-700 dark:text-amber-400 uppercase font-medium block">
+                                                            Complemento
+                                                        </span>
+                                                        <p className={`text-lg font-bold ${complementNeeded >= 0 ? "text-red-700 dark:text-red-400" : "text-green-700 dark:text-green-400"}`}>
+                                                            R$ {Math.abs(complementNeeded).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                                        </p>
+                                                        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                                            {complementNeeded >= 0 ? "a pagar" : "crédito"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {loadingAdvances && (
+                            <div className="text-center py-2 text-sm text-muted-foreground">
+                                Verificando adiantamentos...
+                            </div>
+                        )}
 
                         {/* ✏️ Observações de Confirmação */}
                         <div>

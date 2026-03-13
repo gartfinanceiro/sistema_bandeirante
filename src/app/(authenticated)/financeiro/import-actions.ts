@@ -147,6 +147,30 @@ export async function getImportSuppliers(): Promise<SupplierOption[]> {
 }
 
 // =============================================================================
+// Get carvao suppliers for advance payment dropdown
+// =============================================================================
+
+export interface CarvaoSupplierOption {
+    id: string;
+    name: string;
+}
+
+export async function getImportCarvaoSuppliers(): Promise<CarvaoSupplierOption[]> {
+    const supabase = await createClient();
+
+    const { data } = await supabase
+        .from("carvao_suppliers")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name");
+
+    if (!data) return [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data as any[]).map((s) => ({ id: s.id, name: s.name }));
+}
+
+// =============================================================================
 // Category suggestion engine — keyword-based matching
 // =============================================================================
 
@@ -284,6 +308,9 @@ interface TransactionToImport {
     quantity?: number | null;
     hasIcmsCredit?: boolean;
     icmsRate?: number | null;
+    // Charcoal advance payment fields
+    isAdvance?: boolean;
+    carvaoSupplierId?: string | null;
 }
 
 export async function importSheetTransactions(
@@ -357,11 +384,13 @@ export async function importSheetTransactions(
             // Determine if this is a charcoal purchase (stock updated immediately)
             const isCharcoal = finalCategoryId === "raw_material_charcoal";
             const isRawMaterial = RAW_MATERIAL_SLUGS.has(finalCategoryId || "") || !!finalMaterialId;
+            const isAdvance = tx.isAdvance && isCharcoal;
 
             // For raw materials: set quantity appropriately
             // Charcoal: quantity=null in transaction (won't appear in Balança)
+            // Charcoal advance: quantity=null (volume unknown until discharge)
             // Ore/Flux: quantity=value (will appear in Balança as purchase order)
-            const transactionQuantity = isRawMaterial && tx.quantity
+            const transactionQuantity = isRawMaterial && tx.quantity && !isAdvance
                 ? (isCharcoal ? null : tx.quantity)
                 : null;
 
@@ -379,7 +408,9 @@ export async function importSheetTransactions(
                 quantity: transactionQuantity,
                 has_icms_credit: tx.hasIcmsCredit || false,
                 icms_rate: tx.hasIcmsCredit ? (tx.icmsRate || null) : null,
-                notes: "Importação Planilha Google Sheets",
+                notes: isAdvance
+                    ? "Adiantamento Carvão (Importação Planilha)"
+                    : "Importação Planilha Google Sheets",
             }).select("id").single();
 
             if (insertError) {
@@ -388,8 +419,32 @@ export async function importSheetTransactions(
                 continue;
             }
 
-            // For Charcoal: immediately update stock (same as createPurchaseTransaction)
-            if (isCharcoal && finalMaterialId && tx.quantity && tx.quantity > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const insertedId = (insertedTx as any)?.id;
+
+            // For Charcoal Advance: create advance record (NO stock movement)
+            if (isAdvance && insertedId) {
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const { data: { user } } = await supabase.auth.getUser() as any;
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    await (supabase.from("carvao_advances") as any).insert({
+                        advance_transaction_id: insertedId,
+                        advance_amount: tx.amount,
+                        advance_date: tx.date,
+                        supplier_id: tx.supplierId || null,
+                        carvao_supplier_id: tx.carvaoSupplierId || null,
+                        status: "adiantamento_pago",
+                        notes: `Adiantamento importado da planilha: ${tx.description}`,
+                        created_by: user?.id || null,
+                    });
+                } catch (advErr) {
+                    result.errors.push(`"${tx.description}": Transação criada, mas erro ao registrar adiantamento`);
+                    console.error("Advance creation error:", advErr);
+                }
+            }
+            // For Charcoal (non-advance): immediately update stock
+            else if (isCharcoal && !isAdvance && finalMaterialId && tx.quantity && tx.quantity > 0) {
                 try {
                     const { data: materialData } = await supabase
                         .from("materials")
@@ -414,8 +469,7 @@ export async function importSheetTransactions(
                         unit_price: unitPrice,
                         total_value: tx.amount,
                         movement_type: "compra",
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        reference_id: (insertedTx as any)?.id || null,
+                        reference_id: insertedId || null,
                         notes: `Compra Carvão (Importação Planilha)${tx.supplierId ? ` - Fornecedor` : ""}`,
                     });
                 } catch (stockErr) {
