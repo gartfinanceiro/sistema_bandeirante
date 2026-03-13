@@ -41,6 +41,23 @@ export interface SheetImportResult {
     errors: string[];
 }
 
+export interface SupplierOption {
+    id: string;
+    name: string;
+    materialId: string;
+    defaultPrice: number | null;
+    hasIcms: boolean;
+    icmsRate: number;
+}
+
+// Slugs that identify raw material categories
+const RAW_MATERIAL_SLUGS = new Set([
+    "raw_material_charcoal",
+    "raw_material_ore",
+    "raw_material_flux",
+    "raw_material_general",
+]);
+
 // =============================================================================
 // Get all available categories for the dropdown
 // =============================================================================
@@ -101,6 +118,32 @@ export async function getImportCategories(): Promise<CategoryOption[]> {
     }
 
     return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// =============================================================================
+// Get all active suppliers for the import dropdown
+// =============================================================================
+
+export async function getImportSuppliers(): Promise<SupplierOption[]> {
+    const supabase = await createClient();
+
+    const { data } = await supabase
+        .from("suppliers")
+        .select("id, name, material_id, default_price, has_icms, icms_rate")
+        .eq("is_active", true)
+        .order("name");
+
+    if (!data) return [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data as any[]).map((s) => ({
+        id: s.id,
+        name: s.name,
+        materialId: s.material_id,
+        defaultPrice: s.default_price !== null ? Number(s.default_price) : null,
+        hasIcms: s.has_icms || false,
+        icmsRate: Number(s.icms_rate) || 0,
+    }));
 }
 
 // =============================================================================
@@ -236,6 +279,11 @@ interface TransactionToImport {
     type: "entrada" | "saida";
     status: string;
     categoryId: string | null; // slug or category ID
+    // Raw material purchase fields (optional)
+    supplierId?: string | null;
+    quantity?: number | null;
+    hasIcmsCredit?: boolean;
+    icmsRate?: number | null;
 }
 
 export async function importSheetTransactions(
@@ -306,9 +354,20 @@ export async function importSheetTransactions(
                 continue;
             }
 
+            // Determine if this is a charcoal purchase (stock updated immediately)
+            const isCharcoal = finalCategoryId === "raw_material_charcoal";
+            const isRawMaterial = RAW_MATERIAL_SLUGS.has(finalCategoryId || "") || !!finalMaterialId;
+
+            // For raw materials: set quantity appropriately
+            // Charcoal: quantity=null in transaction (won't appear in Balança)
+            // Ore/Flux: quantity=value (will appear in Balança as purchase order)
+            const transactionQuantity = isRawMaterial && tx.quantity
+                ? (isCharcoal ? null : tx.quantity)
+                : null;
+
             // Insert
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { error: insertError } = await (supabase.from("transactions") as any).insert({
+            const { data: insertedTx, error: insertError } = await (supabase.from("transactions") as any).insert({
                 date: tx.date,
                 amount: tx.amount,
                 type: tx.type,
@@ -316,13 +375,53 @@ export async function importSheetTransactions(
                 category_id: finalCategoryId || null,
                 status: dbStatus,
                 material_id: finalMaterialId,
+                supplier_id: tx.supplierId || null,
+                quantity: transactionQuantity,
+                has_icms_credit: tx.hasIcmsCredit || false,
+                icms_rate: tx.hasIcmsCredit ? (tx.icmsRate || null) : null,
                 notes: "Importação Planilha Google Sheets",
-            });
+            }).select("id").single();
 
             if (insertError) {
                 result.errors.push(`"${tx.description}": ${insertError.message}`);
                 result.skipped++;
                 continue;
+            }
+
+            // For Charcoal: immediately update stock (same as createPurchaseTransaction)
+            if (isCharcoal && finalMaterialId && tx.quantity && tx.quantity > 0) {
+                try {
+                    const { data: materialData } = await supabase
+                        .from("materials")
+                        .select("current_stock")
+                        .eq("id", finalMaterialId)
+                        .single();
+
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const currentStock = Number((materialData as any)?.current_stock) || 0;
+
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    await (supabase.from("materials") as any)
+                        .update({ current_stock: currentStock + tx.quantity })
+                        .eq("id", finalMaterialId);
+
+                    const unitPrice = tx.quantity > 0 ? tx.amount / tx.quantity : 0;
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    await (supabase.from("inventory_movements") as any).insert({
+                        material_id: finalMaterialId,
+                        date: tx.date,
+                        quantity: tx.quantity,
+                        unit_price: unitPrice,
+                        total_value: tx.amount,
+                        movement_type: "compra",
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        reference_id: (insertedTx as any)?.id || null,
+                        notes: `Compra Carvão (Importação Planilha)${tx.supplierId ? ` - Fornecedor` : ""}`,
+                    });
+                } catch (stockErr) {
+                    result.errors.push(`"${tx.description}": Transação criada, mas erro ao atualizar estoque de carvão`);
+                    console.error("Charcoal stock error:", stockErr);
+                }
             }
 
             result.imported++;
@@ -333,5 +432,7 @@ export async function importSheetTransactions(
     }
 
     revalidatePath("/financeiro");
+    revalidatePath("/estoque");
+    revalidatePath("/balanca");
     return result;
 }

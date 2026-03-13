@@ -18,10 +18,12 @@ import type {
     MatchedSheetTransaction,
     CategoryOption,
     SheetImportResult,
+    SupplierOption,
 } from "@/app/(authenticated)/financeiro/import-actions";
 import {
     matchTransactionsWithCategories,
     getImportCategories,
+    getImportSuppliers,
     importSheetTransactions,
 } from "@/app/(authenticated)/financeiro/import-actions";
 
@@ -30,6 +32,38 @@ import {
 // =============================================================================
 
 const SHEET_ID = "1J1KVgILegd9RDQLcMB-68I14bYpn1UqwUiFPlBxmuW0";
+
+const RAW_MATERIAL_SLUGS = new Set([
+    "raw_material_charcoal",
+    "raw_material_ore",
+    "raw_material_flux",
+    "raw_material_general",
+]);
+
+function isRawMaterialCategory(categoryId: string | null, categories: CategoryOption[]): {
+    isMaterial: boolean;
+    isCharcoal: boolean;
+    materialId: string | null;
+} {
+    if (!categoryId) return { isMaterial: false, isCharcoal: false, materialId: null };
+
+    if (categoryId.startsWith("material_")) {
+        return { isMaterial: true, isCharcoal: false, materialId: categoryId.replace("material_", "") };
+    }
+
+    if (RAW_MATERIAL_SLUGS.has(categoryId)) {
+        const cat = categories.find(c => c.id === categoryId || c.slug === categoryId);
+        const isCharcoal = categoryId === "raw_material_charcoal";
+        return { isMaterial: true, isCharcoal, materialId: cat?.materialId || null };
+    }
+
+    const cat = categories.find(c => c.id === categoryId || c.slug === categoryId);
+    if (cat?.materialId) {
+        return { isMaterial: true, isCharcoal: false, materialId: cat.materialId };
+    }
+
+    return { isMaterial: false, isCharcoal: false, materialId: null };
+}
 
 const MONTH_TABS: { label: string; sheet: string; month: number }[] = [
     { label: "Janeiro", sheet: "JANEIRO", month: 1 },
@@ -254,6 +288,14 @@ interface ImportFinanceiroDialogProps {
 
 type Step = "config" | "fetching" | "review" | "importing" | "done";
 
+// Per-transaction purchase data for raw materials
+interface PurchaseData {
+    supplierId: string;
+    quantity: string;
+    hasIcmsCredit: boolean;
+    icmsRate: string;
+}
+
 export function ImportFinanceiroDialog({
     isOpen,
     onClose,
@@ -279,6 +321,11 @@ export function ImportFinanceiroDialog({
     const [importResult, setImportResult] = useState<SheetImportResult | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    // Suppliers + per-transaction purchase data
+    const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+    const [purchaseOverrides, setPurchaseOverrides] = useState<Map<number, PurchaseData>>(new Map());
+    const [expandedPurchaseRows, setExpandedPurchaseRows] = useState<Set<number>>(new Set());
+
     // Review filters
     const [filterType, setFilterType] = useState<"all" | "entrada" | "saida">("all");
     const [filterConfidence, setFilterConfidence] = useState<"all" | "none" | "low">("all");
@@ -295,6 +342,9 @@ export function ImportFinanceiroDialog({
             setCategoryOverrides(new Map());
             setImportResult(null);
             setError(null);
+            setSuppliers([]);
+            setPurchaseOverrides(new Map());
+            setExpandedPurchaseRows(new Set());
             setFilterType("all");
             setFilterConfidence("all");
             setExpandedDays(new Set());
@@ -335,14 +385,27 @@ export function ImportFinanceiroDialog({
                 );
             }
 
-            // 4. Match categories (server action)
-            const [matched, cats] = await Promise.all([
+            // 4. Match categories + load suppliers (server actions)
+            const [matched, cats, sups] = await Promise.all([
                 matchTransactionsWithCategories(parsed),
                 getImportCategories(),
+                getImportSuppliers(),
             ]);
 
             setMatchedTransactions(matched);
             setCategories(cats);
+            setSuppliers(sups);
+
+            // Auto-expand purchase rows for raw material matches
+            const autoExpandPurchase = new Set<number>();
+            matched.forEach((tx, idx) => {
+                const catId = tx.suggestedCategoryId;
+                const info = isRawMaterialCategory(catId, cats);
+                if (info.isMaterial && tx.type === "saida") {
+                    autoExpandPurchase.add(idx);
+                }
+            });
+            setExpandedPurchaseRows(autoExpandPurchase);
 
             // Select all matched by default
             const defaultSelected = new Set<number>();
@@ -373,14 +436,22 @@ export function ImportFinanceiroDialog({
             const toImport = matchedTransactions
                 .map((tx, idx) => ({ tx, idx }))
                 .filter(({ idx }) => selectedIds.has(idx))
-                .map(({ tx, idx }) => ({
-                    date: tx.date,
-                    description: tx.description,
-                    amount: tx.amount,
-                    type: tx.type,
-                    status: tx.status,
-                    categoryId: categoryOverrides.get(idx) || tx.suggestedCategoryId,
-                }));
+                .map(({ tx, idx }) => {
+                    const catId = categoryOverrides.get(idx) || tx.suggestedCategoryId;
+                    const purchase = purchaseOverrides.get(idx);
+                    return {
+                        date: tx.date,
+                        description: tx.description,
+                        amount: tx.amount,
+                        type: tx.type,
+                        status: tx.status,
+                        categoryId: catId,
+                        supplierId: purchase?.supplierId || null,
+                        quantity: purchase?.quantity ? parseFloat(purchase.quantity) : null,
+                        hasIcmsCredit: purchase?.hasIcmsCredit || false,
+                        icmsRate: purchase?.hasIcmsCredit && purchase?.icmsRate ? parseFloat(purchase.icmsRate) : null,
+                    };
+                });
 
             if (toImport.length === 0) {
                 setError("Nenhuma transação selecionada para importar");
@@ -436,6 +507,43 @@ export function ImportFinanceiroDialog({
             next.add(idx);
             return next;
         });
+        // Auto-expand/collapse purchase row based on category
+        const tx = matchedTransactions[idx];
+        const info = isRawMaterialCategory(newCatId, categories);
+        if (info.isMaterial && tx?.type === "saida") {
+            setExpandedPurchaseRows(prev => { const next = new Set(prev); next.add(idx); return next; });
+        } else {
+            setExpandedPurchaseRows(prev => { const next = new Set(prev); next.delete(idx); return next; });
+            // Clear purchase data if category is no longer raw material
+            setPurchaseOverrides(prev => { const next = new Map(prev); next.delete(idx); return next; });
+        }
+    };
+
+    const updatePurchaseData = (idx: number, field: keyof PurchaseData, value: string | boolean) => {
+        setPurchaseOverrides(prev => {
+            const next = new Map(prev);
+            const current = next.get(idx) || { supplierId: "", quantity: "", hasIcmsCredit: false, icmsRate: "" };
+            next.set(idx, { ...current, [field]: value });
+            return next;
+        });
+    };
+
+    // Auto-fill ICMS from supplier defaults
+    const handleSupplierChange = (idx: number, supplierId: string) => {
+        updatePurchaseData(idx, "supplierId", supplierId);
+        const supplier = suppliers.find(s => s.id === supplierId);
+        if (supplier) {
+            updatePurchaseData(idx, "hasIcmsCredit", supplier.hasIcms);
+            if (supplier.hasIcms && supplier.icmsRate > 0) {
+                updatePurchaseData(idx, "icmsRate", supplier.icmsRate.toString());
+            }
+            // Auto-calculate quantity if supplier has default price
+            const tx = matchedTransactions[idx];
+            if (supplier.defaultPrice && supplier.defaultPrice > 0 && tx) {
+                const qty = tx.amount / supplier.defaultPrice;
+                updatePurchaseData(idx, "quantity", qty.toFixed(2));
+            }
+        }
     };
 
     // Filter transactions for review
@@ -472,6 +580,17 @@ export function ImportFinanceiroDialog({
         .filter((_, idx) => selectedIds.has(idx))
         .filter((tx, idx) => !categoryOverrides.get(idx) && !tx.suggestedCategoryId)
         .length;
+
+    // Count raw material transactions missing supplier
+    const rawMaterialWithoutSupplier = matchedTransactions
+        .filter((_, idx) => selectedIds.has(idx))
+        .filter((tx, idx) => {
+            const catId = categoryOverrides.get(idx) || tx.suggestedCategoryId;
+            const info = isRawMaterialCategory(catId, categories);
+            if (!info.isMaterial || tx.type !== "saida") return false;
+            const purchase = purchaseOverrides.get(idx);
+            return !purchase?.supplierId;
+        }).length;
 
     if (!isOpen) return null;
 
@@ -616,6 +735,15 @@ export function ImportFinanceiroDialog({
                                 </div>
                             )}
 
+                            {rawMaterialWithoutSupplier > 0 && (
+                                <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                                    <p className="text-sm text-blue-700 dark:text-blue-400">
+                                        <AlertTriangle className="w-4 h-4 inline mr-1" />
+                                        {rawMaterialWithoutSupplier} compra(s) de matéria-prima sem fornecedor. Preencha os dados para vincular à Balança e ao Estoque.
+                                    </p>
+                                </div>
+                            )}
+
                             {/* Filters */}
                             <div className="flex flex-wrap items-center gap-3">
                                 <div className="flex items-center gap-2">
@@ -687,79 +815,176 @@ export function ImportFinanceiroDialog({
                                                         const isSelected = selectedIds.has(idx);
                                                         const currentCatId = categoryOverrides.get(idx) || tx.suggestedCategoryId || "";
                                                         const confidence = tx.matchConfidence;
+                                                        const materialInfo = isRawMaterialCategory(currentCatId, categories);
+                                                        const isPurchaseRow = materialInfo.isMaterial && tx.type === "saida";
+                                                        const isExpPurchase = expandedPurchaseRows.has(idx);
+                                                        const purchase = purchaseOverrides.get(idx);
+
+                                                        // Filter suppliers by material
+                                                        const filteredSuppliers = materialInfo.materialId
+                                                            ? suppliers.filter(s => s.materialId === materialInfo.materialId)
+                                                            : suppliers;
 
                                                         return (
-                                                            <div
-                                                                key={idx}
-                                                                className={`flex items-center gap-3 p-3 text-sm transition-colors ${isSelected ? "bg-primary/5" : "hover:bg-accent/30"}`}
-                                                            >
-                                                                {/* Checkbox */}
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={isSelected}
-                                                                    onChange={() => toggleSelect(idx)}
-                                                                    className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary"
-                                                                />
+                                                            <div key={idx}>
+                                                                <div className={`flex items-center gap-3 p-3 text-sm transition-colors ${isSelected ? "bg-primary/5" : "hover:bg-accent/30"}`}>
+                                                                    {/* Checkbox */}
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={isSelected}
+                                                                        onChange={() => toggleSelect(idx)}
+                                                                        className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                                                    />
 
-                                                                {/* Type badge */}
-                                                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${tx.type === "entrada"
-                                                                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                                                                    : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                                                    }`}>
-                                                                    {tx.type === "entrada" ? "E" : "S"}
-                                                                </span>
+                                                                    {/* Type badge */}
+                                                                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${tx.type === "entrada"
+                                                                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                                                                        : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                                                        }`}>
+                                                                        {tx.type === "entrada" ? "E" : "S"}
+                                                                    </span>
 
-                                                                {/* Description */}
-                                                                <div className="flex-1 min-w-0">
-                                                                    <p className="truncate text-foreground">{tx.description}</p>
-                                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                                        <span className="text-xs text-muted-foreground">
-                                                                            {tx.section === "carvao" ? "Carvão" : tx.section === "outros" ? "Outros" : "Principal"}
-                                                                        </span>
-                                                                        {tx.status && (
-                                                                            <span className="text-xs text-muted-foreground">• {tx.status}</span>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-
-                                                                {/* Amount */}
-                                                                <span className={`font-mono text-sm font-medium whitespace-nowrap ${tx.type === "entrada" ? "text-green-600" : "text-red-600"
-                                                                    }`}>
-                                                                    {tx.type === "saida" ? "-" : "+"}
-                                                                    {tx.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                                                                </span>
-
-                                                                {/* Category dropdown */}
-                                                                <div className="w-52 flex-shrink-0">
-                                                                    <div className="relative">
-                                                                        <select
-                                                                            value={currentCatId}
-                                                                            onChange={(e) => handleCategoryChange(idx, e.target.value)}
-                                                                            className={`w-full h-8 px-2 pr-7 rounded-md border text-xs truncate focus:outline-none focus:ring-2 focus:ring-ring ${confidence === "high"
-                                                                                ? "border-green-300 bg-green-50 dark:bg-green-950/20 dark:border-green-800"
-                                                                                : confidence === "medium"
-                                                                                    ? "border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800"
-                                                                                    : confidence === "low"
-                                                                                        ? "border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800"
-                                                                                        : "border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800"
-                                                                                }`}
-                                                                        >
-                                                                            <option value="">— Selecionar categoria —</option>
-                                                                            {categories.map((cat) => (
-                                                                                <option key={cat.id} value={cat.id}>
-                                                                                    [{cat.costCenterCode}] {cat.name}
-                                                                                </option>
-                                                                            ))}
-                                                                        </select>
-                                                                        {/* Confidence indicator */}
-                                                                        <div className="absolute right-8 top-1/2 -translate-y-1/2">
-                                                                            {confidence === "high" && <CheckCircle className="w-3.5 h-3.5 text-green-500" />}
-                                                                            {confidence === "medium" && <CheckCircle className="w-3.5 h-3.5 text-blue-500" />}
-                                                                            {confidence === "low" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
-                                                                            {confidence === "none" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                                                                    {/* Description */}
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <p className="truncate text-foreground">{tx.description}</p>
+                                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                                            <span className="text-xs text-muted-foreground">
+                                                                                {tx.section === "carvao" ? "Carvão" : tx.section === "outros" ? "Outros" : "Principal"}
+                                                                            </span>
+                                                                            {tx.status && (
+                                                                                <span className="text-xs text-muted-foreground">• {tx.status}</span>
+                                                                            )}
+                                                                            {isPurchaseRow && (
+                                                                                <span className="text-xs font-medium text-purple-600 dark:text-purple-400">• Matéria-Prima</span>
+                                                                            )}
                                                                         </div>
                                                                     </div>
+
+                                                                    {/* Amount */}
+                                                                    <span className={`font-mono text-sm font-medium whitespace-nowrap ${tx.type === "entrada" ? "text-green-600" : "text-red-600"
+                                                                        }`}>
+                                                                        {tx.type === "saida" ? "-" : "+"}
+                                                                        {tx.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                                                                    </span>
+
+                                                                    {/* Category dropdown */}
+                                                                    <div className="w-52 flex-shrink-0">
+                                                                        <div className="relative">
+                                                                            <select
+                                                                                value={currentCatId}
+                                                                                onChange={(e) => handleCategoryChange(idx, e.target.value)}
+                                                                                className={`w-full h-8 px-2 pr-7 rounded-md border text-xs truncate focus:outline-none focus:ring-2 focus:ring-ring ${confidence === "high"
+                                                                                    ? "border-green-300 bg-green-50 dark:bg-green-950/20 dark:border-green-800"
+                                                                                    : confidence === "medium"
+                                                                                        ? "border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800"
+                                                                                        : confidence === "low"
+                                                                                            ? "border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800"
+                                                                                            : "border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800"
+                                                                                    }`}
+                                                                            >
+                                                                                <option value="">— Selecionar categoria —</option>
+                                                                                {categories.map((cat) => (
+                                                                                    <option key={cat.id} value={cat.id}>
+                                                                                        [{cat.costCenterCode}] {cat.name}
+                                                                                    </option>
+                                                                                ))}
+                                                                            </select>
+                                                                            {/* Confidence indicator */}
+                                                                            <div className="absolute right-8 top-1/2 -translate-y-1/2">
+                                                                                {confidence === "high" && <CheckCircle className="w-3.5 h-3.5 text-green-500" />}
+                                                                                {confidence === "medium" && <CheckCircle className="w-3.5 h-3.5 text-blue-500" />}
+                                                                                {confidence === "low" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                                                                                {confidence === "none" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Expand/collapse purchase details */}
+                                                                    {isPurchaseRow && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setExpandedPurchaseRows(prev => {
+                                                                                const next = new Set(prev);
+                                                                                if (next.has(idx)) next.delete(idx); else next.add(idx);
+                                                                                return next;
+                                                                            })}
+                                                                            className="p-1 rounded hover:bg-accent transition-colors text-purple-500"
+                                                                            title="Dados de compra"
+                                                                        >
+                                                                            {isExpPurchase ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                                        </button>
+                                                                    )}
                                                                 </div>
+
+                                                                {/* Purchase details sub-row */}
+                                                                {isPurchaseRow && isExpPurchase && (
+                                                                    <div className="px-3 pb-3 pt-1 ml-8 mr-3 mb-1 bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-md space-y-2">
+                                                                        <p className="text-xs font-semibold text-purple-700 dark:text-purple-400 flex items-center gap-1.5">
+                                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                                                                            {materialInfo.isCharcoal ? "Compra Carvão (estoque imediato)" : "Compra Matéria-Prima (Balança)"}
+                                                                        </p>
+                                                                        <div className="grid grid-cols-2 gap-2">
+                                                                            {/* Supplier */}
+                                                                            <div>
+                                                                                <label className="text-xs text-purple-700 dark:text-purple-400 font-medium">Fornecedor</label>
+                                                                                <select
+                                                                                    value={purchase?.supplierId || ""}
+                                                                                    onChange={(e) => handleSupplierChange(idx, e.target.value)}
+                                                                                    className="w-full h-7 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                                                                >
+                                                                                    <option value="">Selecione...</option>
+                                                                                    {filteredSuppliers.map(s => (
+                                                                                        <option key={s.id} value={s.id}>
+                                                                                            {s.name} {s.defaultPrice ? `(R$ ${s.defaultPrice.toFixed(2)}/t)` : "(Variável)"}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                </select>
+                                                                            </div>
+                                                                            {/* Quantity */}
+                                                                            <div>
+                                                                                <label className="text-xs text-purple-700 dark:text-purple-400 font-medium">Quantidade (t)</label>
+                                                                                <input
+                                                                                    type="number"
+                                                                                    step="0.01"
+                                                                                    min="0"
+                                                                                    value={purchase?.quantity || ""}
+                                                                                    onChange={(e) => updatePurchaseData(idx, "quantity", e.target.value)}
+                                                                                    placeholder="Ex: 30.00"
+                                                                                    className="w-full h-7 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                        {/* ICMS */}
+                                                                        <div className="flex items-center gap-3">
+                                                                            <label className="flex items-center gap-1.5 cursor-pointer">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={purchase?.hasIcmsCredit || false}
+                                                                                    onChange={(e) => updatePurchaseData(idx, "hasIcmsCredit", e.target.checked)}
+                                                                                    className="w-3.5 h-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                                                                />
+                                                                                <span className="text-xs text-purple-700 dark:text-purple-400 font-medium">ICMS</span>
+                                                                            </label>
+                                                                            {purchase?.hasIcmsCredit && (
+                                                                                <input
+                                                                                    type="number"
+                                                                                    step="0.01"
+                                                                                    min="0"
+                                                                                    value={purchase?.icmsRate || ""}
+                                                                                    onChange={(e) => updatePurchaseData(idx, "icmsRate", e.target.value)}
+                                                                                    placeholder="Alíquota %"
+                                                                                    className="h-7 w-24 px-2 rounded border border-purple-200 dark:border-purple-700 bg-white dark:bg-background text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                                                                />
+                                                                            )}
+                                                                        </div>
+                                                                        {/* Info note */}
+                                                                        <p className="text-[10px] text-purple-500 dark:text-purple-500">
+                                                                            {materialInfo.isCharcoal
+                                                                                ? "Carvão: estoque atualizado imediatamente ao importar."
+                                                                                : "Minério/Fundentes: aparecerá como pedido na Balança. Estoque atualizado na descarga."}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         );
                                                     })}
