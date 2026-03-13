@@ -381,6 +381,107 @@ export async function createPurchaseTransaction(formData: FormData): Promise<{ s
     return { success: true };
 }
 
+// =============================================================================
+// Recalculate stock from inventory_movements (source of truth)
+// =============================================================================
+
+export async function recalculateAllStock(): Promise<{
+    success: boolean;
+    results?: { name: string; oldStock: number; newStock: number }[];
+    error?: string;
+}> {
+    const supabase = await createClient();
+
+    try {
+        // 1. Get all active materials
+        const { data: materials, error: matError } = await supabase
+            .from("materials")
+            .select("id, name, current_stock")
+            .eq("is_active", true);
+
+        if (matError || !materials) {
+            return { success: false, error: matError?.message || "Erro ao buscar materiais" };
+        }
+
+        const results: { name: string; oldStock: number; newStock: number }[] = [];
+
+        for (const mat of materials as { id: string; name: string; current_stock: number }[]) {
+            // 2. Get all movements for this material
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: movements } = await (supabase
+                .from("inventory_movements")
+                .select("quantity, movement_type")
+                .eq("material_id", mat.id) as any);
+
+            let calculatedStock = 0;
+            if (movements && movements.length > 0) {
+                for (const mov of movements as { quantity: number; movement_type: string }[]) {
+                    const qty = Number(mov.quantity) || 0;
+                    const type = mov.movement_type;
+
+                    // Add for purchases and production entries
+                    if (type === "compra" || type === "producao_entrada" || type === "ajuste") {
+                        calculatedStock += qty;
+                    }
+                    // Subtract for consumption and sales
+                    else if (type === "consumo_producao" || type === "venda") {
+                        calculatedStock -= qty;
+                    }
+                }
+            }
+
+            // Also account for inbound_deliveries (Balança - Minério/Fundentes)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: deliveries } = await (supabase
+                .from("inbound_deliveries")
+                .select("weight_measured, transaction_id")
+                .eq("material_id", mat.id) as any);
+
+            if (deliveries && deliveries.length > 0) {
+                // Check if these deliveries already have inventory_movements
+                for (const del of deliveries as { weight_measured: number; transaction_id: string }[]) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const { data: existingMov } = await (supabase
+                        .from("inventory_movements")
+                        .select("id")
+                        .eq("reference_id", del.transaction_id)
+                        .eq("material_id", mat.id)
+                        .limit(1) as any);
+
+                    // Only add if no inventory_movement exists for this delivery
+                    if (!existingMov || existingMov.length === 0) {
+                        calculatedStock += Number(del.weight_measured) || 0;
+                    }
+                }
+            }
+
+            calculatedStock = Math.max(0, calculatedStock);
+            const oldStock = Number(mat.current_stock) || 0;
+
+            if (Math.abs(oldStock - calculatedStock) > 0.001) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("materials") as any)
+                    .update({ current_stock: calculatedStock })
+                    .eq("id", mat.id);
+
+                results.push({
+                    name: mat.name,
+                    oldStock,
+                    newStock: calculatedStock,
+                });
+            }
+        }
+
+        revalidatePath("/estoque");
+        revalidatePath("/financeiro");
+        revalidatePath("/dashboard");
+        return { success: true, results };
+    } catch (err) {
+        console.error("Recalculate stock error:", err);
+        return { success: false, error: err instanceof Error ? err.message : "Erro desconhecido" };
+    }
+}
+
 // Helper to get material by type (LEGACY / Pattern Matching support)
 export async function getMaterialByType(visualType: VisualMaterialType): Promise<{ id: string; name: string; unit: string } | null> {
     const supabase = await createClient();

@@ -588,6 +588,9 @@ export async function createTransaction(formData: FormData): Promise<{
     const description = formData.get("description") as string;
     const hasIcmsCredit = formData.get("hasIcmsCredit") === "true";
     const icmsRate = parseFloat(formData.get("icmsRate") as string) || 0;
+    const quantityRaw = formData.get("quantity") as string | null;
+    const supplierIdRaw = formData.get("supplierId") as string | null;
+    const materialIdRaw = formData.get("materialId") as string | null;
 
     if (!type || !amount || !date) {
         return { success: false, error: "Campos obrigatórios não preenchidos" };
@@ -595,7 +598,7 @@ export async function createTransaction(formData: FormData): Promise<{
 
     // Handle Virtual Material Categories (dynamic from Inventory)
     let finalCategoryId = categoryId;
-    let finalMaterialId = null;
+    let finalMaterialId = materialIdRaw || null;
 
     if (categoryId && categoryId.startsWith("material_")) {
         // It's a virtual category! "material_<uuid>"
@@ -625,6 +628,12 @@ export async function createTransaction(formData: FormData): Promise<{
         }
     }
 
+    // Parse quantity if provided (needed for Balança to pick up raw material orders)
+    const quantity = quantityRaw ? parseFloat(quantityRaw) : null;
+    const isCharcoal = finalCategoryId === "raw_material_charcoal";
+    // Charcoal doesn't go through Balança (stock updated directly or via advance)
+    const transactionQuantity = isCharcoal ? null : (quantity && quantity > 0 ? quantity : null);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: insertedTx, error } = await (supabase.from("transactions") as any).insert({
         type,
@@ -634,6 +643,8 @@ export async function createTransaction(formData: FormData): Promise<{
         status: status || "pago",
         description: description || null,
         material_id: finalMaterialId,
+        supplier_id: supplierIdRaw || null,
+        quantity: transactionQuantity,
         has_icms_credit: hasIcmsCredit,
         icms_rate: hasIcmsCredit ? icmsRate : 0,
     }).select("id").single();

@@ -301,6 +301,8 @@ export function TransactionDialog({
                 // Complement payment: create transaction + finalize advance + update stock
                 formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
                 formData.set("icmsRate", icmsRate);
+                if (materialId) formData.set("materialId", materialId);
+                if (selectedSupplierId) formData.set("supplierId", selectedSupplierId);
 
                 const txResult = await createTransaction(formData);
                 if (txResult.success && txResult.transactionId) {
@@ -329,6 +331,8 @@ export function TransactionDialog({
                 // Charcoal advance: create transaction (no stock) + advance record
                 formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
                 formData.set("icmsRate", icmsRate);
+                if (materialId) formData.set("materialId", materialId);
+                if (selectedSupplierId) formData.set("supplierId", selectedSupplierId);
 
                 const txResult = await createTransaction(formData);
                 if (txResult.success && txResult.transactionId) {
@@ -374,6 +378,11 @@ export function TransactionDialog({
                 // Regular transaction
                 formData.set("hasIcmsCredit", hasIcmsCredit ? "true" : "false");
                 formData.set("icmsRate", icmsRate);
+                // Pass material/supplier/quantity so raw material txs appear in Balança
+                if (materialId) formData.set("materialId", materialId);
+                if (selectedSupplierId) formData.set("supplierId", selectedSupplierId);
+                if (manualQty) formData.set("quantity", manualQty);
+                else if (calculatedQty > 0) formData.set("quantity", calculatedQty.toString());
 
                 const result = await createTransaction(formData);
                 if (result.success) {

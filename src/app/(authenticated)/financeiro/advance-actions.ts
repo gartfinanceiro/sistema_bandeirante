@@ -384,11 +384,13 @@ export async function finalizeAdvanceWithComplement(params: {
             .single() as any);
 
         if (material) {
+            // Use RPC or read-then-set with the latest value
             const currentStock = Number(material.current_stock) || 0;
+            const newStock = currentStock + weightTons;
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("materials") as any)
-                .update({ current_stock: currentStock + weightTons })
+                .update({ current_stock: newStock })
                 .eq("id", material.id);
 
             // Create inventory movement

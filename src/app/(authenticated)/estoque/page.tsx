@@ -7,6 +7,7 @@ import { MaterialsList } from "@/components/estoque/MaterialsList";
 import {
     getMaterials,
     getSuppliers,
+    recalculateAllStock,
     type Material,
     type Supplier,
 } from "./actions";
@@ -47,6 +48,8 @@ export default function EstoquePage() {
 
     const [isSupplierDialogOpen, setIsSupplierDialogOpen] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+    const [isRecalculating, setIsRecalculating] = useState(false);
+    const [recalcResult, setRecalcResult] = useState<{ name: string; oldStock: number; newStock: number }[] | null>(null);
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
@@ -78,6 +81,29 @@ export default function EstoquePage() {
         setIsSupplierDialogOpen(false);
         setEditingSupplier(null);
         loadData();
+    }
+
+    async function handleRecalculateStock() {
+        if (!confirm("Recalcular saldo de estoque com base nos movimentos registrados?")) return;
+        setIsRecalculating(true);
+        setRecalcResult(null);
+        try {
+            const result = await recalculateAllStock();
+            if (result.success) {
+                if (result.results && result.results.length > 0) {
+                    setRecalcResult(result.results);
+                } else {
+                    alert("Estoque já está correto. Nenhum ajuste necessário.");
+                }
+                loadData();
+            } else {
+                alert("Erro: " + result.error);
+            }
+        } catch {
+            alert("Erro ao recalcular estoque");
+        } finally {
+            setIsRecalculating(false);
+        }
     }
 
     // Helper for rendering cards
@@ -141,16 +167,47 @@ export default function EstoquePage() {
                             {/* Action Header */}
                             <div className="flex justify-between items-center">
                                 <h2 className="text-lg font-semibold text-foreground">Visão Geral</h2>
-                                <button
-                                    onClick={() => setIsSupplierDialogOpen(true)}
-                                    className="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md bg-primary text-primary-foreground font-medium shadow hover:bg-primary/90 transition-colors text-sm"
-                                >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                    </svg>
-                                    Gerenciar Fornecedores
-                                </button>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handleRecalculateStock}
+                                        disabled={isRecalculating}
+                                        className="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md border border-border text-foreground font-medium hover:bg-accent transition-colors text-sm disabled:opacity-50"
+                                    >
+                                        <svg className={`w-4 h-4 ${isRecalculating ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                        {isRecalculating ? "Recalculando..." : "Recalcular Estoque"}
+                                    </button>
+                                    <button
+                                        onClick={() => setIsSupplierDialogOpen(true)}
+                                        className="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md bg-primary text-primary-foreground font-medium shadow hover:bg-primary/90 transition-colors text-sm"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                        </svg>
+                                        Gerenciar Fornecedores
+                                    </button>
+                                </div>
                             </div>
+
+                            {/* Recalculation Results */}
+                            {recalcResult && recalcResult.length > 0 && (
+                                <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-4">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Estoque Recalculado</h3>
+                                        <button onClick={() => setRecalcResult(null)} className="text-emerald-600 hover:text-emerald-800 text-xs">Fechar</button>
+                                    </div>
+                                    <div className="space-y-1">
+                                        {recalcResult.map((r, i) => (
+                                            <p key={i} className="text-sm text-emerald-700 dark:text-emerald-400">
+                                                <span className="font-medium">{r.name}:</span>{" "}
+                                                <span className="line-through text-red-500">{r.oldStock.toFixed(2)}</span>{" → "}
+                                                <span className="font-bold text-emerald-600 dark:text-emerald-300">{r.newStock.toFixed(2)}</span>
+                                            </p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Material Cards */}
                             {isLoading ? (
