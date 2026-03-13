@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
+import { Upload } from "lucide-react";
 
 import { PurchaseOrder, Delivery, SupplierBalance } from "@/app/(authenticated)/balanca/actions";
 import { SupplierBalanceList } from "./SupplierBalanceList";
+import { ImportBalancaDialog } from "./ImportBalancaDialog";
 // Note: Verification - we need to make sure these imports are correct and available
 import { createInboundDelivery, updateDelivery, deleteDelivery } from "@/app/(authenticated)/balanca/actions";
 
@@ -14,6 +16,7 @@ interface BalancaWorkspaceProps {
 
 export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
     const [activeTab, setActiveTab] = useState<'orders' | 'suppliers'>('orders');
+    const [showImport, setShowImport] = useState(false);
     const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
     const [deliveries, setDeliveries] = useState<Delivery[]>([]);
     const [loading, setLoading] = useState(false);
@@ -131,24 +134,33 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
     return (
         <div className="space-y-6">
             {/* Tab Navigation */}
-            <div className="flex space-x-4 border-b">
+            <div className="flex items-center justify-between border-b">
+                <div className="flex space-x-4">
+                    <button
+                        onClick={() => setActiveTab('orders')}
+                        className={`pb-2 px-1 text-sm font-medium transition-colors ${activeTab === 'orders'
+                            ? 'border-b-2 border-blue-500 text-blue-600'
+                            : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                    >
+                        Ordens de Recebimento
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('suppliers')}
+                        className={`pb-2 px-1 text-sm font-medium transition-colors ${activeTab === 'suppliers'
+                            ? 'border-b-2 border-blue-500 text-blue-600'
+                            : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                    >
+                        Saldo por Fornecedor
+                    </button>
+                </div>
                 <button
-                    onClick={() => setActiveTab('orders')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors ${activeTab === 'orders'
-                        ? 'border-b-2 border-blue-500 text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                        }`}
+                    onClick={() => setShowImport(true)}
+                    className="mb-2 flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
                 >
-                    Ordens de Recebimento
-                </button>
-                <button
-                    onClick={() => setActiveTab('suppliers')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors ${activeTab === 'suppliers'
-                        ? 'border-b-2 border-blue-500 text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                >
-                    Saldo por Fornecedor
+                    <Upload className="w-4 h-4" />
+                    Importar Balança
                 </button>
             </div>
 
@@ -425,6 +437,16 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
                     </div>
                 </div>
             )}
+
+            {/* Import Dialog */}
+            <ImportBalancaDialog
+                isOpen={showImport}
+                onClose={() => setShowImport(false)}
+                onImportComplete={() => {
+                    // Reload page to refresh data
+                    window.location.reload();
+                }}
+            />
         </div>
     );
 }

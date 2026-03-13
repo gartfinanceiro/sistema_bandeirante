@@ -8,6 +8,7 @@ import { TransactionTable } from "@/components/financeiro/TransactionTable";
 import { CategoryManagerDialog } from "@/components/financeiro/CategoryManagerDialog";
 import { FinancialAnalysisView } from "@/components/financeiro/FinancialAnalysisView";
 import { FiscalDashboard } from "@/components/financeiro/FiscalDashboard";
+import { ImportFinanceiroDialog } from "@/components/financeiro/ImportFinanceiroDialog";
 import {
     getCategories,
     getMonthSummary,
@@ -49,6 +50,7 @@ export default function FinanceiroPage() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState<TransactionRow | null>(null);
     const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
+    const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
 
     // Debounce search
     useEffect(() => {
@@ -144,6 +146,15 @@ export default function FinanceiroPage() {
                     <p className="text-muted-foreground">Gestão de fluxo de caixa</p>
                 </div>
                 <div className="flex gap-2">
+                    <button
+                        onClick={() => setIsImportDialogOpen(true)}
+                        className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md border border-border text-foreground font-medium hover:bg-accent transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        Importar Planilha
+                    </button>
                     <button
                         onClick={() => setIsCategoryDialogOpen(true)}
                         className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-md border border-border text-foreground font-medium hover:bg-accent transition-colors"
@@ -290,6 +301,16 @@ export default function FinanceiroPage() {
                 onClose={() => {
                     setIsCategoryDialogOpen(false);
                     loadData(); // Refresh categories
+                }}
+            />
+
+            {/* Import from Google Sheets Dialog */}
+            <ImportFinanceiroDialog
+                isOpen={isImportDialogOpen}
+                onClose={() => setIsImportDialogOpen(false)}
+                onImportComplete={() => {
+                    setIsImportDialogOpen(false);
+                    loadData(); // Refresh data
                 }}
             />
         </div>
