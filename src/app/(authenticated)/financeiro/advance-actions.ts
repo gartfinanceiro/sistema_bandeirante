@@ -248,8 +248,27 @@ export async function linkDischargeToAdvance(params: {
     const totalValue = weightTons * params.pricePerTon;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dischargeDate = (discharge as any).discharge_date;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const volumeMdc = Number((discharge as any).volume_mdc) || 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const density = Number((discharge as any).density) || 0;
 
-    // 2. Update advance with discharge link
+    // 2. Get advance data (for advance_amount and advance_transaction_id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: advance, error: advError } = await (supabase.from("carvao_advances") as any)
+        .select("id, status, advance_amount, advance_transaction_id")
+        .eq("id", params.advanceId)
+        .single();
+
+    if (advError || !advance) {
+        return { success: false, error: "Adiantamento não encontrado" };
+    }
+
+    if (advance.status !== "adiantamento_pago") {
+        return { success: false, error: "Adiantamento já foi processado" };
+    }
+
+    // 3. Update advance with discharge link
     const { error } = await (supabase.from("carvao_advances") as any)
         .update({
             discharge_id: params.dischargeId,
@@ -266,7 +285,50 @@ export async function linkDischargeToAdvance(params: {
         return { success: false, error: error.message };
     }
 
+    // 4. Update charcoal stock — the cargo is physically in the yard now
+    if (weightTons > 0) {
+        try {
+            // Find charcoal material
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: material } = await (supabase
+                .from("materials")
+                .select("id, current_stock")
+                .or("name.ilike.%carvão%,name.ilike.%carvao%")
+                .limit(1)
+                .single() as any);
+
+            if (material) {
+                const currentStock = Number(material.current_stock) || 0;
+                const newStock = currentStock + weightTons;
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("materials") as any)
+                    .update({ current_stock: newStock })
+                    .eq("id", material.id);
+
+                // Create inventory movement with discharge as reference
+                const unitPrice = weightTons > 0 ? Number(advance.advance_amount) / weightTons : 0;
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("inventory_movements") as any).insert({
+                    material_id: material.id,
+                    date: dischargeDate,
+                    quantity: weightTons,
+                    unit_price: unitPrice,
+                    total_value: Number(advance.advance_amount),
+                    movement_type: "compra",
+                    reference_id: advance.advance_transaction_id || params.dischargeId,
+                    notes: `Descarga de carvão (adiantamento) - ${volumeMdc.toFixed(1)} MDC × ${density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+                });
+            }
+        } catch (err) {
+            console.error("Stock update error during discharge link:", err);
+            // Don't fail the whole operation - advance link was already saved
+        }
+    }
+
     revalidatePath("/financeiro");
+    revalidatePath("/estoque");
     revalidatePath("/carvao/confirmacoes");
     return { success: true };
 }
@@ -283,6 +345,22 @@ export async function createComplementPayment(params: {
 }): Promise<{ success: boolean; error?: string }> {
     const supabase = await createClient();
 
+    // 1. Get advance with discharge info to check if stock was already updated
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: advance, error: advError } = await (supabase.from("carvao_advances") as any)
+        .select("id, status, advance_amount, discharge_id, advance_transaction_id")
+        .eq("id", params.advanceId)
+        .single();
+
+    if (advError || !advance) {
+        return { success: false, error: "Adiantamento não encontrado" };
+    }
+
+    if (advance.status !== "descarregado") {
+        return { success: false, error: "Adiantamento não está no status 'descarregado'" };
+    }
+
+    // 2. Update advance → finalizado
     const { error } = await (supabase.from("carvao_advances") as any)
         .update({
             complement_transaction_id: params.complementTransactionId,
@@ -298,7 +376,79 @@ export async function createComplementPayment(params: {
         return { success: false, error: error.message };
     }
 
+    // 3. Check if inventory_movement was already created for this advance
+    //    (by linkDischargeToAdvance or by a previous fix)
+    //    If not, create it now using discharge data
+    if (advance.discharge_id) {
+        try {
+            // Check for existing movement linked to this advance's transaction
+            const refId = advance.advance_transaction_id || advance.discharge_id;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: existingMov } = await (supabase
+                .from("inventory_movements")
+                .select("id")
+                .eq("reference_id", refId)
+                .limit(1) as any);
+
+            if (!existingMov || existingMov.length === 0) {
+                // No movement exists — get discharge data and create one
+                const { data: discharge } = await supabase
+                    .from("carvao_discharges")
+                    .select("weight_tons, discharge_date, volume_mdc, density")
+                    .eq("id", advance.discharge_id)
+                    .single();
+
+                if (discharge) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const weightTons = Number((discharge as any).weight_tons);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const volumeMdc = Number((discharge as any).volume_mdc) || 0;
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const density = Number((discharge as any).density) || 0;
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const dischargeDate = (discharge as any).discharge_date;
+
+                    if (weightTons > 0) {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const { data: material } = await (supabase
+                            .from("materials")
+                            .select("id, current_stock")
+                            .or("name.ilike.%carvão%,name.ilike.%carvao%")
+                            .limit(1)
+                            .single() as any);
+
+                        if (material) {
+                            const currentStock = Number(material.current_stock) || 0;
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            await (supabase.from("materials") as any)
+                                .update({ current_stock: currentStock + weightTons })
+                                .eq("id", material.id);
+
+                            const totalPaid = Number(advance.advance_amount) + params.complementAmount;
+                            const unitPrice = weightTons > 0 ? totalPaid / weightTons : 0;
+
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            await (supabase.from("inventory_movements") as any).insert({
+                                material_id: material.id,
+                                date: dischargeDate,
+                                quantity: weightTons,
+                                unit_price: unitPrice,
+                                total_value: totalPaid,
+                                movement_type: "compra",
+                                reference_id: refId,
+                                notes: `Complemento carvão (finalização) - ${volumeMdc.toFixed(1)} MDC × ${density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Stock update error during complement finalization:", err);
+        }
+    }
+
     revalidatePath("/financeiro");
+    revalidatePath("/estoque");
     return { success: true };
 }
 
@@ -372,7 +522,7 @@ export async function finalizeAdvanceWithComplement(params: {
         return { success: false, error: updateError.message };
     }
 
-    // 4. Update charcoal stock
+    // 4. Update charcoal stock (only if no movement was already created by linkDischargeToAdvance)
     try {
         // Find charcoal material
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -384,30 +534,45 @@ export async function finalizeAdvanceWithComplement(params: {
             .single() as any);
 
         if (material) {
-            // Use RPC or read-then-set with the latest value
-            const currentStock = Number(material.current_stock) || 0;
-            const newStock = currentStock + weightTons;
-
+            // Check if inventory_movement already exists for this advance
+            // (may have been created by linkDischargeToAdvance)
+            const advanceTxId = advance.advance_transaction_id || params.complementTransactionId;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase.from("materials") as any)
-                .update({ current_stock: newStock })
-                .eq("id", material.id);
+            const { data: existingMov } = await (supabase
+                .from("inventory_movements")
+                .select("id")
+                .eq("material_id", material.id)
+                .eq("reference_id", advanceTxId)
+                .limit(1) as any);
 
-            // Create inventory movement
-            const totalValue = Number(advance.advance_amount) + params.complementAmount;
-            const unitPrice = weightTons > 0 ? totalValue / weightTons : 0;
+            // Skip if movement already exists (avoid duplication)
+            if (existingMov && existingMov.length > 0) {
+                // Movement already created by linkDischargeToAdvance — skip
+            } else {
+                const currentStock = Number(material.current_stock) || 0;
+                const newStock = currentStock + weightTons;
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase.from("inventory_movements") as any).insert({
-                material_id: material.id,
-                date: params.complementDate,
-                quantity: weightTons,
-                unit_price: unitPrice,
-                total_value: totalValue,
-                movement_type: "compra",
-                reference_id: params.complementTransactionId,
-                notes: `Complemento de adiantamento - ${params.volumeMdc.toFixed(1)} MDC × ${params.density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
-            });
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("materials") as any)
+                    .update({ current_stock: newStock })
+                    .eq("id", material.id);
+
+                // Create inventory movement
+                const totalValue = Number(advance.advance_amount) + params.complementAmount;
+                const unitPrice = weightTons > 0 ? totalValue / weightTons : 0;
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("inventory_movements") as any).insert({
+                    material_id: material.id,
+                    date: params.complementDate,
+                    quantity: weightTons,
+                    unit_price: unitPrice,
+                    total_value: totalValue,
+                    movement_type: "compra",
+                    reference_id: params.complementTransactionId,
+                    notes: `Complemento de adiantamento - ${params.volumeMdc.toFixed(1)} MDC × ${params.density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+                });
+            }
         }
     } catch (err) {
         console.error("Stock update error during advance finalization:", err);
