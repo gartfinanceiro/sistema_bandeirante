@@ -159,35 +159,48 @@ export async function matchTicketsWithOrders(
     }
 
     // Helper: find supplier by report origin name
+    // Nota: Um fornecedor pode entregar materiais diferentes (ex: MSM entrega minério E calcário).
+    // Primeiro tenta match com restrição de material, depois sem restrição.
+    // A segurança é garantida por findOpenOrder() que filtra por supplier_id + material_id.
     function findSupplier(reportOrigin: string, materialId: string | null): { id: string; name: string } | null {
         const clean = reportOrigin.replace(/\s*-\s*\[\d+\]\s*$/, '').trim().toLowerCase();
-        // Try exact name match first
-        for (const s of supplierList) {
-            const sName = s.name.toLowerCase();
-            if (sName === clean && (!materialId || s.material_id === materialId)) {
-                return { id: s.id, name: s.name };
-            }
-        }
-        // Fuzzy contains match
-        for (const s of supplierList) {
-            const sName = s.name.toLowerCase();
-            if ((clean.includes(sName) || sName.includes(clean)) && (!materialId || s.material_id === materialId)) {
-                return { id: s.id, name: s.name };
-            }
-        }
-        // Partial keyword match (first significant word)
-        const keywords = clean.split(/\s+/).filter(w => w.length > 3 && !['ltda', 'mining', 'mineracao', 'mineração', 'transportadora'].includes(w));
-        for (const kw of keywords) {
+
+        // Função auxiliar para buscar com ou sem restrição de material
+        function searchSupplier(requireMaterial: boolean): { id: string; name: string } | null {
+            // Try exact name match first
             for (const s of supplierList) {
                 const sName = s.name.toLowerCase();
-                if (sName.includes(kw) && (!materialId || s.material_id === materialId)) {
+                if (sName === clean && (!requireMaterial || !materialId || s.material_id === materialId)) {
                     return { id: s.id, name: s.name };
                 }
             }
+            // Fuzzy contains match
+            for (const s of supplierList) {
+                const sName = s.name.toLowerCase();
+                if ((clean.includes(sName) || sName.includes(clean)) && (!requireMaterial || !materialId || s.material_id === materialId)) {
+                    return { id: s.id, name: s.name };
+                }
+            }
+            // Partial keyword match (first significant word)
+            const keywords = clean.split(/\s+/).filter(w => w.length > 3 && !['ltda', 'mining', 'mineracao', 'mineração', 'transportadora'].includes(w));
+            for (const kw of keywords) {
+                for (const s of supplierList) {
+                    const sName = s.name.toLowerCase();
+                    if (sName.includes(kw) && (!requireMaterial || !materialId || s.material_id === materialId)) {
+                        return { id: s.id, name: s.name };
+                    }
+                }
+            }
+            return null;
         }
-        // NOTE: Intentionally NOT matching without material constraint
-        // to avoid assigning deliveries to wrong supplier/material combinations
-        return null;
+
+        // Primeiro: tentar com restrição de material (match mais preciso)
+        const withMaterial = searchSupplier(true);
+        if (withMaterial) return withMaterial;
+
+        // Fallback: tentar sem restrição de material (fornecedor pode entregar materiais diferentes)
+        // Segurança: findOpenOrder() ainda filtra por supplier_id + material_id
+        return searchSupplier(false);
     }
 
     // Helper: find open order for supplier+material (FIFO, with remaining capacity)

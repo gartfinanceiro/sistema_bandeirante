@@ -230,8 +230,8 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
                                             <span>{order.supplierName}</span>
                                         </div>
                                         <div className="mt-2 text-xs flex justify-between">
-                                            <span>Saldo: {(order.remainingQuantity || 0).toLocaleString("pt-BR")} kg</span>
-                                            <span className="text-gray-400">Total: {(order.quantity || 0).toLocaleString("pt-BR")}</span>
+                                            <span>Saldo: {(order.remainingQuantity || 0).toLocaleString("pt-BR")} t</span>
+                                            <span className="text-gray-400">Total: {(order.quantity || 0).toLocaleString("pt-BR")} t</span>
                                         </div>
                                         <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
                                             <div
