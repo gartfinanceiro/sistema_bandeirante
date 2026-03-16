@@ -113,6 +113,14 @@ export async function confirmDischarge(formData: FormData): Promise<{
         }
     }
 
+    // Buscar dados da descarga antes de confirmar (para o inventory_movement)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: dischargeData } = await (supabase
+        .from("carvao_discharges")
+        .select("weight_tons, volume_mdc, density, discharge_date, supplier_id")
+        .eq("id", dischargeId)
+        .single() as any);
+
     const { error } = await (supabase
         .from("carvao_discharges") as any)
         .update(updateData)
@@ -133,8 +141,73 @@ export async function confirmDischarge(formData: FormData): Promise<{
         return { success: false, error: error.message };
     }
 
+    // =========================================================================
+    // Atualizar estoque de carvão: criar inventory_movement na confirmação
+    // =========================================================================
+    if (dischargeData) {
+        const weightTons = Number(dischargeData.weight_tons) || 0;
+        const volumeMdc = Number(dischargeData.volume_mdc) || 0;
+        const densityVal = Number(dischargeData.density) || 0;
+        const dischargeDate = dischargeData.discharge_date;
+        const pricePerTonVal = price_per_ton ? parseFloat(price_per_ton) : 0;
+        const netVal = net_value ? parseFloat(net_value) : 0;
+
+        // Usar volume_mdc como quantidade — unidade do material carvão é m³ (MDC)
+        if (volumeMdc > 0) {
+            try {
+                // Verificar se já existe inventory_movement para esta descarga
+                // (pode ter sido criado por linkDischargeToAdvance ou importação)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: existingMov } = await (supabase
+                    .from("inventory_movements")
+                    .select("id")
+                    .eq("reference_id", dischargeId)
+                    .limit(1) as any);
+
+                if (!existingMov || existingMov.length === 0) {
+                    // Buscar material carvão
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const { data: material } = await (supabase
+                        .from("materials")
+                        .select("id, current_stock")
+                        .or("name.ilike.%carvão%,name.ilike.%carvao%")
+                        .limit(1)
+                        .single() as any);
+
+                    if (material) {
+                        const currentStock = Number(material.current_stock) || 0;
+
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        await (supabase.from("materials") as any)
+                            .update({ current_stock: currentStock + volumeMdc })
+                            .eq("id", material.id);
+
+                        const totalValue = netVal || (weightTons * pricePerTonVal);
+                        const unitPrice = volumeMdc > 0 ? totalValue / volumeMdc : 0;
+
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        await (supabase.from("inventory_movements") as any).insert({
+                            material_id: material.id,
+                            date: dischargeDate,
+                            quantity: volumeMdc,
+                            unit_price: unitPrice,
+                            total_value: totalValue,
+                            movement_type: "compra",
+                            reference_id: dischargeId,
+                            notes: `Descarga carvão confirmada - ${volumeMdc.toFixed(1)} MDC (${weightTons.toFixed(2)} t)`,
+                        });
+                    }
+                }
+            } catch (stockErr) {
+                console.error("Erro ao atualizar estoque na confirmação:", stockErr);
+                // Não falhar a confirmação — o estoque pode ser recalculado depois
+            }
+        }
+    }
+
     revalidatePath("/carvao/confirmacoes");
     revalidatePath("/carvao/descargas");
+    revalidatePath("/estoque");
     return { success: true };
 }
 

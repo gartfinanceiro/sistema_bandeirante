@@ -80,27 +80,26 @@ INSERT INTO inventory_movements (
 SELECT
     (SELECT id FROM materials WHERE name ILIKE '%carvão%' LIMIT 1) AS material_id,
     cd.discharge_date AS date,
-    cd.weight_tons AS quantity,
+    cd.volume_mdc AS quantity,  -- Unidade do carvão é m³ (MDC), NÃO toneladas
     CASE
-        WHEN cd.weight_tons > 0 AND cd.net_value IS NOT NULL AND cd.net_value > 0
-            THEN cd.net_value / cd.weight_tons
-        WHEN cd.weight_tons > 0 AND cd.price_per_ton IS NOT NULL AND cd.price_per_ton > 0
-            THEN cd.price_per_ton
+        WHEN cd.volume_mdc > 0 AND cd.net_value IS NOT NULL AND cd.net_value > 0
+            THEN cd.net_value / cd.volume_mdc
+        WHEN cd.volume_mdc > 0 AND cd.price_per_ton IS NOT NULL AND cd.price_per_ton > 0
+            THEN (cd.weight_tons * cd.price_per_ton) / cd.volume_mdc
         ELSE 0
     END AS unit_price,
     COALESCE(cd.net_value, cd.weight_tons * COALESCE(cd.price_per_ton, 0), 0) AS total_value,
     'compra' AS movement_type,
     cd.id AS reference_id,
     FORMAT(
-        'Correção estoque - Descarga %s: %s MDC × %s = %s t',
+        'Correção estoque - Descarga %s: %s MDC (%s t)',
         cd.discharge_date,
         ROUND(cd.volume_mdc::numeric, 1),
-        ROUND(cd.density::numeric, 0),
         ROUND(cd.weight_tons::numeric, 2)
     ) AS notes
 FROM carvao_discharges cd
 LEFT JOIN carvao_advances ca ON ca.discharge_id = cd.id
-WHERE cd.weight_tons > 0
+WHERE cd.volume_mdc > 0
   AND NOT EXISTS (
       SELECT 1 FROM inventory_movements im
       WHERE im.reference_id = cd.id

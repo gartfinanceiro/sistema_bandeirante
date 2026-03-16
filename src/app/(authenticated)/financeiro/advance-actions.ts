@@ -286,7 +286,8 @@ export async function linkDischargeToAdvance(params: {
     }
 
     // 4. Update charcoal stock — the cargo is physically in the yard now
-    if (weightTons > 0) {
+    // Usar volume_mdc como quantidade — unidade do material carvão é m³ (MDC)
+    if (volumeMdc > 0) {
         try {
             // Find charcoal material
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -299,7 +300,7 @@ export async function linkDischargeToAdvance(params: {
 
             if (material) {
                 const currentStock = Number(material.current_stock) || 0;
-                const newStock = currentStock + weightTons;
+                const newStock = currentStock + volumeMdc;
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("materials") as any)
@@ -307,18 +308,18 @@ export async function linkDischargeToAdvance(params: {
                     .eq("id", material.id);
 
                 // Create inventory movement with discharge as reference
-                const unitPrice = weightTons > 0 ? Number(advance.advance_amount) / weightTons : 0;
+                const unitPrice = volumeMdc > 0 ? Number(advance.advance_amount) / volumeMdc : 0;
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("inventory_movements") as any).insert({
                     material_id: material.id,
                     date: dischargeDate,
-                    quantity: weightTons,
+                    quantity: volumeMdc,
                     unit_price: unitPrice,
                     total_value: Number(advance.advance_amount),
                     movement_type: "compra",
                     reference_id: advance.advance_transaction_id || params.dischargeId,
-                    notes: `Descarga de carvão (adiantamento) - ${volumeMdc.toFixed(1)} MDC × ${density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+                    notes: `Descarga carvão (adiantamento) - ${volumeMdc.toFixed(1)} MDC (${weightTons.toFixed(2)} t)`,
                 });
             }
         } catch (err) {
@@ -404,11 +405,10 @@ export async function createComplementPayment(params: {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const volumeMdc = Number((discharge as any).volume_mdc) || 0;
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const density = Number((discharge as any).density) || 0;
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const dischargeDate = (discharge as any).discharge_date;
 
-                    if (weightTons > 0) {
+                    // Usar volume_mdc como quantidade — unidade do carvão é m³ (MDC)
+                    if (volumeMdc > 0) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         const { data: material } = await (supabase
                             .from("materials")
@@ -421,22 +421,22 @@ export async function createComplementPayment(params: {
                             const currentStock = Number(material.current_stock) || 0;
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             await (supabase.from("materials") as any)
-                                .update({ current_stock: currentStock + weightTons })
+                                .update({ current_stock: currentStock + volumeMdc })
                                 .eq("id", material.id);
 
                             const totalPaid = Number(advance.advance_amount) + params.complementAmount;
-                            const unitPrice = weightTons > 0 ? totalPaid / weightTons : 0;
+                            const unitPrice = volumeMdc > 0 ? totalPaid / volumeMdc : 0;
 
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             await (supabase.from("inventory_movements") as any).insert({
                                 material_id: material.id,
                                 date: dischargeDate,
-                                quantity: weightTons,
+                                quantity: volumeMdc,
                                 unit_price: unitPrice,
                                 total_value: totalPaid,
                                 movement_type: "compra",
                                 reference_id: refId,
-                                notes: `Complemento carvão (finalização) - ${volumeMdc.toFixed(1)} MDC × ${density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+                                notes: `Complemento carvão (finalização) - ${volumeMdc.toFixed(1)} MDC (${weightTons.toFixed(2)} t)`,
                             });
                         }
                     }
@@ -549,8 +549,9 @@ export async function finalizeAdvanceWithComplement(params: {
             if (existingMov && existingMov.length > 0) {
                 // Movement already created by linkDischargeToAdvance — skip
             } else {
+                // Usar volume_mdc como quantidade — unidade do carvão é m³ (MDC)
                 const currentStock = Number(material.current_stock) || 0;
-                const newStock = currentStock + weightTons;
+                const newStock = currentStock + params.volumeMdc;
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("materials") as any)
@@ -559,18 +560,18 @@ export async function finalizeAdvanceWithComplement(params: {
 
                 // Create inventory movement
                 const totalValue = Number(advance.advance_amount) + params.complementAmount;
-                const unitPrice = weightTons > 0 ? totalValue / weightTons : 0;
+                const unitPrice = params.volumeMdc > 0 ? totalValue / params.volumeMdc : 0;
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("inventory_movements") as any).insert({
                     material_id: material.id,
                     date: params.complementDate,
-                    quantity: weightTons,
+                    quantity: params.volumeMdc,
                     unit_price: unitPrice,
                     total_value: totalValue,
                     movement_type: "compra",
                     reference_id: params.complementTransactionId,
-                    notes: `Complemento de adiantamento - ${params.volumeMdc.toFixed(1)} MDC × ${params.density.toFixed(3)} = ${weightTons.toFixed(2)} t`,
+                    notes: `Complemento de adiantamento - ${params.volumeMdc.toFixed(1)} MDC (${weightTons.toFixed(2)} t)`,
                 });
             }
         }
