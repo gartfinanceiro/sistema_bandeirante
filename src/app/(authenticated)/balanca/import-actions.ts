@@ -158,49 +158,37 @@ export async function matchTicketsWithOrders(
         return null;
     }
 
-    // Helper: find supplier by report origin name
-    // Nota: Um fornecedor pode entregar materiais diferentes (ex: MSM entrega minério E calcário).
-    // Primeiro tenta match com restrição de material, depois sem restrição.
-    // A segurança é garantida por findOpenOrder() que filtra por supplier_id + material_id.
-    function findSupplier(reportOrigin: string, materialId: string | null): { id: string; name: string } | null {
+    // Helper: find ALL matching suppliers by report origin name
+    // Retorna todos os fornecedores que casam com o nome (ex: "Corumbá com frete" e "Corumbá sem frete")
+    // para que o matching principal possa tentar cada um em busca de uma ordem aberta.
+    function findAllSuppliers(reportOrigin: string): { id: string; name: string }[] {
         const clean = reportOrigin.replace(/\s*-\s*\[\d+\]\s*$/, '').trim().toLowerCase();
+        const found = new Map<string, { id: string; name: string }>();
 
-        // Função auxiliar para buscar com ou sem restrição de material
-        function searchSupplier(requireMaterial: boolean): { id: string; name: string } | null {
-            // Try exact name match first
-            for (const s of supplierList) {
-                const sName = s.name.toLowerCase();
-                if (sName === clean && (!requireMaterial || !materialId || s.material_id === materialId)) {
-                    return { id: s.id, name: s.name };
-                }
+        // Exact name match
+        for (const s of supplierList) {
+            if (s.name.toLowerCase() === clean) {
+                found.set(s.id, { id: s.id, name: s.name });
             }
-            // Fuzzy contains match
-            for (const s of supplierList) {
-                const sName = s.name.toLowerCase();
-                if ((clean.includes(sName) || sName.includes(clean)) && (!requireMaterial || !materialId || s.material_id === materialId)) {
-                    return { id: s.id, name: s.name };
-                }
-            }
-            // Partial keyword match (first significant word)
-            const keywords = clean.split(/\s+/).filter(w => w.length > 3 && !['ltda', 'mining', 'mineracao', 'mineração', 'transportadora'].includes(w));
-            for (const kw of keywords) {
-                for (const s of supplierList) {
-                    const sName = s.name.toLowerCase();
-                    if (sName.includes(kw) && (!requireMaterial || !materialId || s.material_id === materialId)) {
-                        return { id: s.id, name: s.name };
-                    }
-                }
-            }
-            return null;
         }
-
-        // Primeiro: tentar com restrição de material (match mais preciso)
-        const withMaterial = searchSupplier(true);
-        if (withMaterial) return withMaterial;
-
-        // Fallback: tentar sem restrição de material (fornecedor pode entregar materiais diferentes)
-        // Segurança: findOpenOrder() ainda filtra por supplier_id + material_id
-        return searchSupplier(false);
+        // Fuzzy contains match
+        for (const s of supplierList) {
+            const sName = s.name.toLowerCase();
+            if ((clean.includes(sName) || sName.includes(clean)) && !found.has(s.id)) {
+                found.set(s.id, { id: s.id, name: s.name });
+            }
+        }
+        // Partial keyword match
+        const keywords = clean.split(/\s+/).filter(w => w.length > 3 && !['ltda', 'mining', 'mineracao', 'mineração', 'transportadora'].includes(w));
+        for (const kw of keywords) {
+            for (const s of supplierList) {
+                const sName = s.name.toLowerCase();
+                if (sName.includes(kw) && !found.has(s.id)) {
+                    found.set(s.id, { id: s.id, name: s.name });
+                }
+            }
+        }
+        return Array.from(found.values());
     }
 
     // Helper: find open order for supplier+material (FIFO, with remaining capacity)
@@ -239,38 +227,59 @@ export async function matchTicketsWithOrders(
     }
 
     // 5. Match each ticket
+    // Busca todos os fornecedores compatíveis e tenta cada um até encontrar ordem aberta.
+    // Isso resolve casos como "Corumbá com frete" e "Corumbá sem frete" que aparecem
+    // iguais no relatório da balança mas são fornecedores distintos no sistema.
     const matched: MatchedTicket[] = tickets.map(ticket => {
         const mat = findMaterial(ticket.material);
-        const sup = findSupplier(ticket.origin, mat?.id || null);
-        const order = (sup && mat) ? findOpenOrder(sup.id, mat.id, ticket.weightKg) : null;
+        const suppliers = findAllSuppliers(ticket.origin);
+
+        // Tentar cada fornecedor em busca de uma ordem aberta
+        let bestSup: { id: string; name: string } | null = null;
+        let bestOrder: { transactionId: string; date: string; quantity: number; remaining: number } | null = null;
+
+        if (mat && suppliers.length > 0) {
+            for (const sup of suppliers) {
+                const order = findOpenOrder(sup.id, mat.id, ticket.weightKg);
+                if (order) {
+                    bestSup = sup;
+                    bestOrder = order;
+                    break; // Encontrou ordem, parar
+                }
+            }
+            // Se nenhum fornecedor tem ordem aberta, usar o primeiro encontrado (para status "partial")
+            if (!bestSup) {
+                bestSup = suppliers[0];
+            }
+        }
 
         let matchStatus: 'matched' | 'partial' | 'unmatched' = 'unmatched';
         let matchNote = '';
 
-        if (mat && sup && order) {
+        if (mat && bestSup && bestOrder) {
             matchStatus = 'matched';
-            const remainingTons = (order.remaining / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
-            matchNote = `Ordem ${new Date(order.date).toLocaleDateString('pt-BR')} — Saldo: ${remainingTons} t`;
-        } else if (mat && sup) {
+            const remainingTons = (bestOrder.remaining / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+            matchNote = `Ordem ${new Date(bestOrder.date).toLocaleDateString('pt-BR')} — Saldo: ${remainingTons} t`;
+        } else if (mat && bestSup) {
             matchStatus = 'partial';
             matchNote = 'Fornecedor e material encontrados, mas sem ordem de compra em aberto';
         } else {
             const notes: string[] = [];
             if (!mat) notes.push(`Material "${ticket.material}" não encontrado`);
-            if (!sup) notes.push(`Fornecedor "${ticket.origin}" não encontrado`);
+            if (suppliers.length === 0) notes.push(`Fornecedor "${ticket.origin}" não encontrado`);
             matchNote = notes.join('; ');
         }
 
         return {
             ...ticket,
-            supplierId: sup?.id || null,
-            supplierName: sup?.name || null,
+            supplierId: bestSup?.id || null,
+            supplierName: bestSup?.name || null,
             materialId: mat?.id || null,
             materialName: mat?.name || null,
-            transactionId: order?.transactionId || null,
-            transactionDate: order?.date || null,
-            transactionQuantity: order?.quantity || null,
-            transactionRemaining: order?.remaining || null,
+            transactionId: bestOrder?.transactionId || null,
+            transactionDate: bestOrder?.date || null,
+            transactionQuantity: bestOrder?.quantity || null,
+            transactionRemaining: bestOrder?.remaining || null,
             matchStatus,
             matchNote,
         };
