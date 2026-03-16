@@ -628,6 +628,29 @@ export async function createTransaction(formData: FormData): Promise<{
         }
     }
 
+    // FALLBACK: If material_id still null but category is a raw material slug,
+    // resolve material_id from the transaction_categories table
+    const RAW_MATERIAL_SLUGS_SET = new Set(["raw_material_charcoal", "raw_material_ore", "raw_material_flux", "raw_material_general"]);
+    if (!finalMaterialId && finalCategoryId && RAW_MATERIAL_SLUGS_SET.has(finalCategoryId)) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: catData } = await (supabase
+                .from("transaction_categories")
+                .select("material_id")
+                .eq("slug", finalCategoryId)
+                .not("material_id", "is", null)
+                .limit(1)
+                .single() as any);
+
+            if (catData?.material_id) {
+                finalMaterialId = catData.material_id;
+                console.log(`[createTransaction] Resolved material_id from category slug "${finalCategoryId}":`, finalMaterialId);
+            }
+        } catch {
+            console.warn(`[createTransaction] Could not resolve material_id from category slug "${finalCategoryId}"`);
+        }
+    }
+
     // Parse quantity if provided (needed for Balança to pick up raw material orders)
     const quantity = quantityRaw ? parseFloat(quantityRaw) : null;
     const isCharcoal = finalCategoryId === "raw_material_charcoal";
@@ -710,6 +733,29 @@ export async function updateTransaction(formData: FormData): Promise<{
         }
     }
 
+    // FALLBACK: If material_id still null but category is a raw material slug,
+    // resolve material_id from the transaction_categories table
+    const RAW_MATERIAL_SLUGS_UPDATE = new Set(["raw_material_charcoal", "raw_material_ore", "raw_material_flux", "raw_material_general"]);
+    if (!finalMaterialId && finalCategoryId && RAW_MATERIAL_SLUGS_UPDATE.has(finalCategoryId)) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: catData } = await (supabase
+                .from("transaction_categories")
+                .select("material_id")
+                .eq("slug", finalCategoryId)
+                .not("material_id", "is", null)
+                .limit(1)
+                .single() as any);
+
+            if (catData?.material_id) {
+                finalMaterialId = catData.material_id;
+                console.log(`[updateTransaction] Resolved material_id from category slug "${finalCategoryId}":`, finalMaterialId);
+            }
+        } catch {
+            console.warn(`[updateTransaction] Could not resolve material_id from category slug "${finalCategoryId}"`);
+        }
+    }
+
     // Prepare update object
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updateData: any = {
@@ -723,12 +769,8 @@ export async function updateTransaction(formData: FormData): Promise<{
         icms_rate: hasIcmsCredit ? icmsRate : 0,
     };
 
-    // Only update material_id if it was explicitly a material category selection
-    // otherwise we might preserve existing or set to null? 
-    // If user changed category to non-material, we should probably set material_id to null.
-    // Ideally we'd set it to finalMaterialId (which is null if not material category).
-    // But existing logic in other places might set material_id separately?
-    // Let's assume if selecting a category, we overwrite material_id.
+    // Update material_id: resolved from virtual category or from category slug fallback.
+    // If user changed category to non-material, material_id will be null.
     updateData.material_id = finalMaterialId;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

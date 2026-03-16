@@ -356,6 +356,28 @@ export async function importSheetTransactions(
                 }
             }
 
+            // FALLBACK: If material_id still null but category is a raw material slug,
+            // resolve material_id from the transaction_categories table
+            if (!finalMaterialId && finalCategoryId && RAW_MATERIAL_SLUGS.has(finalCategoryId)) {
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const { data: catData } = await (supabase
+                        .from("transaction_categories")
+                        .select("material_id")
+                        .eq("slug", finalCategoryId)
+                        .not("material_id", "is", null)
+                        .limit(1)
+                        .single() as any);
+
+                    if (catData?.material_id) {
+                        finalMaterialId = catData.material_id;
+                        console.log(`[importSheet] Resolved material_id from category slug "${finalCategoryId}":`, finalMaterialId);
+                    }
+                } catch {
+                    console.warn(`[importSheet] Could not resolve material_id from category slug "${finalCategoryId}"`);
+                }
+            }
+
             // Map status
             let dbStatus = "pago";
             const statusLower = (tx.status || "").toLowerCase().trim();

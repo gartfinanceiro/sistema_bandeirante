@@ -96,19 +96,22 @@ export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
     }
 
     // 3. Map to PurchaseOrder
+    // NOTA: transaction.quantity está em TONELADAS, weight_measured em KG
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orders: PurchaseOrder[] = transactions.map((t: any) => {
-        const totalQty = Number(t.quantity) || 0;
+        const totalQty = Number(t.quantity) || 0; // Em toneladas
+        const materialUnit = t.material?.unit || 'tonelada';
         const sums = deliveryMap.get(t.id) || { real: 0, fiscal: 0, lastDate: null };
 
-        const deliveredQty = sums.real;
-        const deliveredQtyFiscal = sums.fiscal;
+        // Converter peso entregue de kg para a mesma unidade da quantidade (toneladas)
+        const deliveredQty = materialUnit === 'tonelada' ? sums.real / 1000 : sums.real;
+        const deliveredQtyFiscal = materialUnit === 'tonelada' ? sums.fiscal / 1000 : sums.fiscal;
         const lastDeliveryDate = sums.lastDate;
 
         const remaining = Math.max(0, totalQty - deliveredQty);
         const remainingFiscal = Math.max(0, totalQty - deliveredQtyFiscal);
 
-        // Status Logic: Completed if remaining is effectively zero (tolerance 0.1)
+        // Status Logic: Completed if remaining is effectively zero (tolerance 0.1 tons = 100kg)
         const computedStatus = remaining <= 0.1 ? 'completed' : 'open';
 
         return {
@@ -237,10 +240,10 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
     const weightFiscal = weightFiscalStr && !isNaN(parseFloat(weightFiscalStr)) ? parseFloat(weightFiscalStr) : null;
 
     try {
-        // 1. Get Transaction info
+        // 1. Get Transaction info (including material unit)
         const { data: tx, error: txError } = await (supabase
             .from("transactions")
-            .select("material_id, materials(name)")
+            .select("material_id, materials(name, unit)")
             .eq("id", transactionId)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
@@ -248,8 +251,12 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
         if (txError || !tx) throw new Error("Transação original não encontrada.");
 
         const materialId = tx.material_id;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const materialUnit = (tx as any).materials?.unit || 'tonelada';
+        // Converter peso de kg para a unidade do material (tonelada = /1000)
+        const quantityInUnit = materialUnit === 'tonelada' ? weight / 1000 : weight;
 
-        // 2. Insert Inbound Delivery
+        // 2. Insert Inbound Delivery (weight_measured sempre em kg)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: deliveryError } = await (supabase.from("inbound_deliveries") as any).insert({
             transaction_id: transactionId,
@@ -262,25 +269,25 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
 
         if (deliveryError) throw new Error("Erro ao salvar pesagem: " + deliveryError.message);
 
-        // 3. Update Inventory
+        // 3. Update Inventory (quantity na unidade do material)
         // A. Movement Log
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: moveError } = await (supabase.from("inventory_movements") as any).insert({
             material_id: materialId,
-            quantity: weight,
+            quantity: quantityInUnit,
             movement_type: "compra",
             reference_id: transactionId,
             date: new Date(date + "T12:00:00Z").toISOString(),
-            notes: `Entrega Balança: Placa ${plate}`
+            notes: `Entrega Balança: Placa ${plate} (${weight} kg)`
         });
 
         if (moveError) throw new Error("Erro ao mover estoque: " + moveError.message);
 
-        // B. Update Material Current Stock
+        // B. Update Material Current Stock (na unidade do material)
         const { data: matCheck } = await supabase.from("materials").select("current_stock").eq("id", materialId).single();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const currentStock = Number((matCheck as any)?.current_stock) || 0;
-        const newStock = currentStock + weight;
+        const newStock = currentStock + quantityInUnit;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: updateError } = await (supabase.from("materials") as any)
@@ -393,22 +400,27 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
 
         // Adjust stock if weight changed
         if (Math.abs(weightDiff) > 0.001) {
-            // Get material_id from transaction
+            // Get material_id and unit from transaction
             const { data: tx } = await (supabase
                 .from("transactions")
-                .select("material_id")
+                .select("material_id, materials(unit)")
                 .eq("id", oldDelivery.transaction_id)
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .single() as any);
 
             if (tx?.material_id) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const matUnit = (tx as any).materials?.unit || 'tonelada';
+                // Converter diff de kg para unidade do material
+                const diffInUnit = matUnit === 'tonelada' ? weightDiff / 1000 : weightDiff;
+
                 const { data: mat } = await supabase.from("materials").select("current_stock").eq("id", tx.material_id).single();
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const currentStock = Number((mat as any)?.current_stock) || 0;
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("materials") as any)
-                    .update({ current_stock: currentStock + weightDiff })
+                    .update({ current_stock: currentStock + diffInUnit })
                     .eq("id", tx.material_id);
             }
         }
@@ -470,22 +482,28 @@ export async function deleteDelivery(id: string): Promise<{ success: boolean; er
 
         // Subtract weight from stock and Log Reversal
         if (tx?.material_id) {
-            // A. Log Movement Reversal
+            // Fetch material unit for conversion
+            const { data: matInfo } = await supabase.from("materials").select("unit, current_stock").eq("id", tx.material_id).single();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const matUnit = (matInfo as any)?.unit || 'tonelada';
+            // Converter peso de kg para unidade do material
+            const quantityInUnit = matUnit === 'tonelada' ? weight / 1000 : weight;
+
+            // A. Log Movement Reversal (na unidade do material)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("inventory_movements") as any).insert({
                 material_id: tx.material_id,
-                quantity: -weight, // Negative to reverse
+                quantity: -quantityInUnit, // Negative to reverse
                 movement_type: "ajuste",
-                reference_id: delivery.transaction_id, // Link to order 
+                reference_id: delivery.transaction_id, // Link to order
                 date: new Date().toISOString(),
-                notes: `Estorno de Entrega: Placa ${delivery.plate}`
+                notes: `Estorno de Entrega: Placa ${delivery.plate} (${weight} kg)`
             });
 
-            // B. Update Stock
-            const { data: mat } = await supabase.from("materials").select("current_stock").eq("id", tx.material_id).single();
+            // B. Update Stock (na unidade do material)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const currentStock = Number((mat as any)?.current_stock) || 0;
-            const newStock = Math.max(0, currentStock - weight);
+            const currentStock = Number((matInfo as any)?.current_stock) || 0;
+            const newStock = Math.max(0, currentStock - quantityInUnit);
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("materials") as any)
