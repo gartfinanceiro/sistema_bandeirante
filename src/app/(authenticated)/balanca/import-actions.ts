@@ -143,6 +143,18 @@ export async function matchTicketsWithOrders(
                 if (key.includes('carvão') || key.includes('carvao')) return val;
             }
         }
+        // Xisto grafitoso → fundente
+        if (clean.includes('xisto')) {
+            for (const [key, val] of materialMap.entries()) {
+                if (key.includes('fundente') || key.includes('calcário') || key.includes('calcario')) return val;
+            }
+        }
+        // Lingoteira → ferro-gusa (saída de produto)
+        if (clean.includes('lingoteira') || clean.includes('gusa')) {
+            for (const [key, val] of materialMap.entries()) {
+                if (key.includes('gusa')) return val;
+            }
+        }
         return null;
     }
 

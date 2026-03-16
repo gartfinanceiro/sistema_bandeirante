@@ -24,12 +24,15 @@ function parseBalancaFile(htmlContent: string): ParsedTicket[] {
         const ticketNumber = cells[1]?.textContent?.trim() || "";
         const rawDate = cells[3]?.textContent?.trim() || "";
         const time = cells[4]?.textContent?.trim() || "";
-        const plate = cells[5]?.textContent?.trim() || "";
-        const driver = cells[6]?.textContent?.trim() || "";
-        const transporter = cells[7]?.textContent?.trim() || "";
-        const origin = cells[8]?.textContent?.trim() || "";
-        const material = cells[10]?.textContent?.trim() || "";
-        const weightStr = cells[11]?.textContent?.trim() || "0";
+        // Nota: cells[5] e [6] são colunas ocultas (Data/Hora Saída)
+        const plate = cells[7]?.textContent?.trim() || "";       // Veículo
+        const driver = cells[8]?.textContent?.trim() || "";      // Motorista
+        const transporter = cells[9]?.textContent?.trim() || ""; // Transportador
+        const origin = cells[10]?.textContent?.trim() || "";     // Origem (fornecedor)
+        // cells[11] = Destino, cells[12] = Doc Externo (hidden)
+        const material = cells[13]?.textContent?.trim() || "";   // Carga (material real)
+        // cells[14-18] são colunas ocultas (Grupo, MDC, Umidade, Moinha, Tição)
+        const weightStr = cells[19]?.textContent?.trim() || "0"; // Peso Líquido
 
         // Parse date: "DD/MM/YYYY HH:MM:SS" or "DD/MM/YYYY 00:00:00" → "YYYY-MM-DD"
         let isoDate = "";
