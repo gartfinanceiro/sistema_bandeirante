@@ -133,6 +133,11 @@ export async function matchTicketsWithOrders(
                 if (key.includes('calcário') || key.includes('calcario') || key.includes('fundente') || key.includes('cal')) return val;
             }
         }
+        if (clean.includes('coque')) {
+            for (const [key, val] of materialMap.entries()) {
+                if (key.includes('coque')) return val;
+            }
+        }
         if (clean.includes('carvao') || clean.includes('carvão') || clean.includes('moinha')) {
             for (const [key, val] of materialMap.entries()) {
                 if (key.includes('carvão') || key.includes('carvao')) return val;
@@ -175,6 +180,7 @@ export async function matchTicketsWithOrders(
 
     // Helper: find open order for supplier+material (FIFO, with remaining capacity)
     // Track assigned weight per order across all tickets
+    // NOTA: transaction.quantity está em TONELADAS, weight_measured/weightKg em KG
     const assignedWeightMap = new Map<string, number>();
 
     function findOpenOrder(supplierId: string, materialId: string, weightKg: number): {
@@ -189,15 +195,16 @@ export async function matchTicketsWithOrders(
             if (order.supplier_id === supplierId && order.material_id === materialId) {
                 const delivered = deliverySumMap.get(order.id) || 0;
                 const assigned = assignedWeightMap.get(order.id) || 0;
-                const totalQty = Number(order.quantity);
-                const remaining = totalQty - delivered - assigned;
+                // Converter quantity de toneladas para kg para comparar com pesos da balança
+                const totalQtyKg = Number(order.quantity) * 1000;
+                const remaining = totalQtyKg - delivered - assigned;
                 if (remaining > 0) {
                     // Assign this weight
                     assignedWeightMap.set(order.id, assigned + weightKg);
                     return {
                         transactionId: order.id,
                         date: order.date,
-                        quantity: totalQty,
+                        quantity: totalQtyKg,
                         remaining: remaining,
                     };
                 }
@@ -217,7 +224,8 @@ export async function matchTicketsWithOrders(
 
         if (mat && sup && order) {
             matchStatus = 'matched';
-            matchNote = `Ordem ${new Date(order.date).toLocaleDateString('pt-BR')} — Saldo: ${order.remaining.toLocaleString('pt-BR')} kg`;
+            const remainingTons = (order.remaining / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+            matchNote = `Ordem ${new Date(order.date).toLocaleDateString('pt-BR')} — Saldo: ${remainingTons} t`;
         } else if (mat && sup) {
             matchStatus = 'partial';
             matchNote = 'Fornecedor e material encontrados, mas sem ordem de compra em aberto';
@@ -269,10 +277,10 @@ export async function importMatchedTickets(
         }
 
         try {
-            // 1. Get material_id from transaction
+            // 1. Get material_id and unit from transaction + material
             const { data: tx, error: txError } = await (supabase
                 .from("transactions")
-                .select("material_id")
+                .select("material_id, materials(unit)")
                 .eq("id", ticket.transactionId)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .single() as any);
@@ -284,6 +292,10 @@ export async function importMatchedTickets(
             }
 
             const materialId = tx.material_id;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const materialUnit = (tx as any).materials?.unit || 'tonelada';
+            // Converter peso de kg para a unidade do material (tonelada = /1000, kg = /1)
+            const quantityInUnit = materialUnit === 'tonelada' ? ticket.weightKg / 1000 : ticket.weightKg;
 
             // 2. Check for duplicate (same transaction + plate + weight + approximate date)
             const ticketDate = new Date(ticket.date + "T12:00:00Z").toISOString();
@@ -324,18 +336,18 @@ export async function importMatchedTickets(
                 continue;
             }
 
-            // 4. Create inventory movement
+            // 4. Create inventory movement (quantity na unidade do material)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("inventory_movements") as any).insert({
                 material_id: materialId,
-                quantity: ticket.weightKg,
+                quantity: quantityInUnit,
                 movement_type: "compra",
                 reference_id: ticket.transactionId,
                 date: ticketDate,
-                notes: `Importação Balança: Placa ${ticket.plate} — Ticket #${ticket.ticketNumber}`,
+                notes: `Importação Balança: Placa ${ticket.plate} — Ticket #${ticket.ticketNumber} (${ticket.weightKg} kg)`,
             });
 
-            // 5. Update material stock
+            // 5. Update material stock (na unidade do material)
             const { data: matCheck } = await supabase
                 .from("materials")
                 .select("current_stock")
@@ -345,7 +357,7 @@ export async function importMatchedTickets(
             const currentStock = Number((matCheck as any)?.current_stock) || 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("materials") as any)
-                .update({ current_stock: currentStock + ticket.weightKg })
+                .update({ current_stock: currentStock + quantityInUnit })
                 .eq("id", materialId);
 
             result.imported++;
