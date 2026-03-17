@@ -191,39 +191,93 @@ export async function matchTicketsWithOrders(
         return Array.from(found.values());
     }
 
-    // Helper: find open order for supplier+material (FIFO, with remaining capacity)
-    // Track assigned weight per order across all tickets
+    // Helper: build consolidated groups (supplier+material) for matching
     // NOTA: transaction.quantity está em TONELADAS, weight_measured/weightKg em KG
+    interface OrderGroup {
+        groupKey: string;
+        supplierId: string;
+        materialId: string;
+        transactions: { id: string; date: string; totalQtyKg: number; deliveredKg: number }[];
+        totalQtyKg: number;
+        totalDeliveredKg: number;
+    }
+
+    const groupMap = new Map<string, OrderGroup>();
+    if (openOrders) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const order of openOrders as any[]) {
+            const groupKey = `${order.supplier_id}_${order.material_id}`;
+            if (!groupMap.has(groupKey)) {
+                groupMap.set(groupKey, {
+                    groupKey,
+                    supplierId: order.supplier_id,
+                    materialId: order.material_id,
+                    transactions: [],
+                    totalQtyKg: 0,
+                    totalDeliveredKg: 0,
+                });
+            }
+            const group = groupMap.get(groupKey)!;
+            const totalQtyKg = Number(order.quantity) * 1000;
+            const deliveredKg = deliverySumMap.get(order.id) || 0;
+            group.transactions.push({ id: order.id, date: order.date, totalQtyKg, deliveredKg });
+            group.totalQtyKg += totalQtyKg;
+            group.totalDeliveredKg += deliveredKg;
+        }
+    }
+
+    // Track assigned weight per order across all tickets (for FIFO within a batch)
     const assignedWeightMap = new Map<string, number>();
 
     function findOpenOrder(supplierId: string, materialId: string, weightKg: number): {
         transactionId: string;
         date: string;
-        quantity: number;
-        remaining: number;
+        quantity: number;      // group total in kg
+        remaining: number;     // group remaining in kg
     } | null {
-        if (!openOrders) return null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        for (const order of openOrders as any[]) {
-            if (order.supplier_id === supplierId && order.material_id === materialId) {
-                const delivered = deliverySumMap.get(order.id) || 0;
-                const assigned = assignedWeightMap.get(order.id) || 0;
-                // Converter quantity de toneladas para kg para comparar com pesos da balança
-                const totalQtyKg = Number(order.quantity) * 1000;
-                const remaining = totalQtyKg - delivered - assigned;
-                if (remaining > 0) {
-                    // Assign this weight
-                    assignedWeightMap.set(order.id, assigned + weightKg);
-                    return {
-                        transactionId: order.id,
-                        date: order.date,
-                        quantity: totalQtyKg,
-                        remaining: remaining,
-                    };
-                }
+        const groupKey = `${supplierId}_${materialId}`;
+        const group = groupMap.get(groupKey);
+        if (!group) return null;
+
+        // Calculate group remaining (total assigned across all transactions)
+        const totalAssigned = group.transactions.reduce((sum, t) => sum + (assignedWeightMap.get(t.id) || 0), 0);
+        const groupRemaining = group.totalQtyKg - group.totalDeliveredKg - totalAssigned;
+
+        if (groupRemaining <= 0) return null;
+
+        // FIFO: find first transaction with individual capacity
+        // Transactions are already ordered by date ASC from the query
+        let bestTxId: string | null = null;
+        let bestTxDate: string | null = null;
+
+        for (const t of group.transactions) {
+            const assigned = assignedWeightMap.get(t.id) || 0;
+            const txRemaining = t.totalQtyKg - t.deliveredKg - assigned;
+            if (txRemaining > 100) { // 100kg tolerance (~0.1 ton)
+                bestTxId = t.id;
+                bestTxDate = t.date;
+                break;
             }
         }
-        return null;
+
+        // Overflow: all individual transactions full, but group has saldo
+        // Use the most recent transaction (last in list)
+        if (!bestTxId) {
+            const lastTx = group.transactions[group.transactions.length - 1];
+            bestTxId = lastTx.id;
+            bestTxDate = lastTx.date;
+        }
+
+        // Assign weight to the chosen transaction
+        const prevAssigned = assignedWeightMap.get(bestTxId) || 0;
+        assignedWeightMap.set(bestTxId, prevAssigned + weightKg);
+
+        return {
+            transactionId: bestTxId,
+            date: bestTxDate!,
+            quantity: group.totalQtyKg,
+            remaining: groupRemaining,
+        };
     }
 
     // 5. Match each ticket
@@ -259,7 +313,7 @@ export async function matchTicketsWithOrders(
         if (mat && bestSup && bestOrder) {
             matchStatus = 'matched';
             const remainingTons = (bestOrder.remaining / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
-            matchNote = `Ordem ${new Date(bestOrder.date).toLocaleDateString('pt-BR')} — Saldo: ${remainingTons} t`;
+            matchNote = `Saldo grupo: ${remainingTons} t`;
         } else if (mat && bestSup) {
             matchStatus = 'partial';
             matchNote = 'Fornecedor e material encontrados, mas sem ordem de compra em aberto';

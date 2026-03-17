@@ -47,11 +47,10 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
 
     const [isPending, startTransition] = useTransition();
 
-    async function loadDeliveries(orderId: string) {
+    async function loadDeliveries(transactionIds: string[]) {
         setLoading(true);
-        // Dynamic import to avoid server-action serialization issues if any
-        const { getDeliveriesForTransaction } = await import("@/app/(authenticated)/balanca/actions");
-        const data = await getDeliveriesForTransaction(orderId);
+        const { getDeliveriesForTransactions } = await import("@/app/(authenticated)/balanca/actions");
+        const data = await getDeliveriesForTransactions(transactionIds);
         setDeliveries(data);
         setLoading(false);
     }
@@ -60,7 +59,7 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
         setSelectedOrder(order);
         setSelectedDelivery(null);
         resetForm();
-        loadDeliveries(order.id);
+        loadDeliveries(order.transactionIds);
     }
 
     function resetForm() {
@@ -88,7 +87,7 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
             const { deleteDelivery } = await import("@/app/(authenticated)/balanca/actions");
             const result = await deleteDelivery(deliveryId);
             if (result.success) {
-                if (selectedOrder) loadDeliveries(selectedOrder.id);
+                if (selectedOrder) loadDeliveries(selectedOrder.transactionIds);
             } else {
                 alert(result.error || "Erro ao excluir.");
             }
@@ -109,7 +108,15 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
             if (selectedDelivery) {
                 formData.append("id", selectedDelivery.id);
             } else {
-                formData.append("transactionId", selectedOrder.id);
+                // FIFO: find best transaction within the consolidated group
+                const { findBestTransactionForDelivery } = await import("@/app/(authenticated)/balanca/actions");
+                const weightKg = parseFloat(weight) || 0;
+                const best = await findBestTransactionForDelivery(selectedOrder.transactionIds, weightKg);
+                if (!best) {
+                    alert("Nenhuma transação encontrada para vincular esta entrega.");
+                    return;
+                }
+                formData.append("transactionId", best.transactionId);
             }
 
             formData.append("plate", plate);
@@ -124,7 +131,7 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
 
             if (result.success) {
                 resetForm();
-                loadDeliveries(selectedOrder.id);
+                loadDeliveries(selectedOrder.transactionIds);
             } else {
                 alert(result.error || "Erro ao salvar.");
             }
@@ -207,9 +214,9 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
                             <div className="space-y-3">
                                 {filteredOrders.map((order) => (
                                     <div
-                                        key={order.id}
+                                        key={order.groupKey}
                                         onClick={() => handleSelectOrder(order)}
-                                        className={`p-3 border rounded cursor-pointer transition-colors relative ${selectedOrder?.id === order.id
+                                        className={`p-3 border rounded cursor-pointer transition-colors relative ${selectedOrder?.groupKey === order.groupKey
                                             ? "border-blue-500 bg-blue-50"
                                             : "hover:bg-gray-50"
                                             } ${order.computedStatus === 'completed' ? 'opacity-80' : ''}`}
@@ -228,6 +235,11 @@ export function BalancaWorkspace({ orders, balances }: BalancaWorkspaceProps) {
                                         </div>
                                         <div className="flex justify-between mt-1 text-sm text-gray-600">
                                             <span>{order.supplierName}</span>
+                                            {order.orderCount > 1 && (
+                                                <span className="text-[10px] text-gray-400">
+                                                    {order.orderCount} ordens desde {new Date(order.firstDate).toLocaleDateString("pt-BR", { timeZone: 'UTC', day: "2-digit", month: "2-digit" })}
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="mt-2 text-xs flex justify-between">
                                             <span>Saldo: {(order.remainingQuantity || 0).toLocaleString("pt-BR")} t</span>

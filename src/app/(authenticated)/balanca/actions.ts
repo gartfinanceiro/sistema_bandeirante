@@ -4,20 +4,25 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
 export interface PurchaseOrder {
-    id: string;
-    date: string;
+    groupKey: string;              // `${supplierId}_${materialId}`
+    id: string;                    // ID da transação mais recente (compatibilidade)
+    transactionIds: string[];      // TODOS os IDs de transações do grupo
+    date: string;                  // Data da transação MAIS RECENTE
+    firstDate: string;             // Data da PRIMEIRA transação
     supplierId: string;
     supplierName: string;
+    materialId: string;
     materialName: string;
     materialUnit: string;
-    quantity: number;
-    deliveredQuantity: number;
+    quantity: number;              // SOMA de todas as transações do grupo
+    deliveredQuantity: number;     // SOMA de todas as deliveries do grupo
     deliveredQuantityFiscal: number | null;
     lastDeliveryDate: string | null;
     remainingQuantity: number;
     remainingQuantityFiscal: number | null;
-    status: string; // Database status
-    computedStatus: 'open' | 'completed'; // Logic status
+    status: string;
+    computedStatus: 'open' | 'completed';
+    orderCount: number;            // Quantas transações compõem este grupo
 }
 
 export interface SupplierBalance {
@@ -95,40 +100,95 @@ export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
         });
     }
 
-    // 3. Map to PurchaseOrder
+    // 3. Agrupar transações por supplier_id + material_id
     // NOTA: transaction.quantity está em TONELADAS, weight_measured em KG
+    const groupMap = new Map<string, {
+        transactionIds: string[];
+        dates: string[];
+        supplierId: string;
+        supplierName: string;
+        materialId: string;
+        materialName: string;
+        materialUnit: string;
+        totalQuantity: number;
+        totalDeliveredKg: number;
+        totalFiscalKg: number;
+        lastDeliveryDate: string | null;
+        status: string;
+    }>();
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const orders: PurchaseOrder[] = transactions.map((t: any) => {
-        const totalQty = Number(t.quantity) || 0; // Em toneladas
-        const materialUnit = t.material?.unit || 'tonelada';
+    for (const t of transactions as any[]) {
+        const supplierId = t.supplier_id || '';
+        const materialId = t.material_id || '';
+        const groupKey = `${supplierId}_${materialId}`;
+
         const sums = deliveryMap.get(t.id) || { real: 0, fiscal: 0, lastDate: null };
 
-        // Converter peso entregue de kg para a mesma unidade da quantidade (toneladas)
-        const deliveredQty = materialUnit === 'tonelada' ? sums.real / 1000 : sums.real;
-        const deliveredQtyFiscal = materialUnit === 'tonelada' ? sums.fiscal / 1000 : sums.fiscal;
-        const lastDeliveryDate = sums.lastDate;
+        if (!groupMap.has(groupKey)) {
+            groupMap.set(groupKey, {
+                transactionIds: [],
+                dates: [],
+                supplierId,
+                supplierName: t.supplier?.name || "Sem fornecedor",
+                materialId,
+                materialName: t.material?.name || "Desconhecido",
+                materialUnit: t.material?.unit || "unid",
+                totalQuantity: 0,
+                totalDeliveredKg: 0,
+                totalFiscalKg: 0,
+                lastDeliveryDate: null,
+                status: t.status,
+            });
+        }
 
-        const remaining = Math.max(0, totalQty - deliveredQty);
-        const remainingFiscal = Math.max(0, totalQty - deliveredQtyFiscal);
+        const group = groupMap.get(groupKey)!;
+        group.transactionIds.push(t.id);
+        group.dates.push(t.date);
+        group.totalQuantity += Number(t.quantity) || 0;
+        group.totalDeliveredKg += sums.real;
+        group.totalFiscalKg += sums.fiscal;
 
-        // Status Logic: Completed if remaining is effectively zero (tolerance 0.1 tons = 100kg)
+        // Track latest delivery date across all transactions in group
+        if (sums.lastDate) {
+            if (!group.lastDeliveryDate || new Date(sums.lastDate) > new Date(group.lastDeliveryDate)) {
+                group.lastDeliveryDate = sums.lastDate;
+            }
+        }
+    }
+
+    // 4. Map groups to PurchaseOrder[]
+    const orders: PurchaseOrder[] = Array.from(groupMap.entries()).map(([groupKey, g]) => {
+        const materialUnit = g.materialUnit || 'tonelada';
+        const deliveredQty = materialUnit === 'tonelada' ? g.totalDeliveredKg / 1000 : g.totalDeliveredKg;
+        const deliveredQtyFiscal = materialUnit === 'tonelada' ? g.totalFiscalKg / 1000 : g.totalFiscalKg;
+        const remaining = Math.max(0, g.totalQuantity - deliveredQty);
+        const remainingFiscal = Math.max(0, g.totalQuantity - deliveredQtyFiscal);
         const computedStatus = remaining <= 0.1 ? 'completed' : 'open';
 
+        // Sort dates to find most recent and earliest
+        const sortedDates = [...g.dates].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
         return {
-            id: t.id,
-            date: t.date,
-            supplierId: t.supplier_id,
-            supplierName: t.supplier?.name || "Sem fornecedor",
-            materialName: t.material?.name || "Desconhecido",
-            materialUnit: t.material?.unit || "unid",
-            quantity: totalQty,
+            groupKey,
+            id: g.transactionIds[0], // Most recent transaction (transactions ordered by date desc)
+            transactionIds: g.transactionIds,
+            date: sortedDates[0],
+            firstDate: sortedDates[sortedDates.length - 1],
+            supplierId: g.supplierId,
+            supplierName: g.supplierName,
+            materialId: g.materialId,
+            materialName: g.materialName,
+            materialUnit,
+            quantity: g.totalQuantity,
             deliveredQuantity: deliveredQty,
             deliveredQuantityFiscal: deliveredQtyFiscal,
-            lastDeliveryDate: lastDeliveryDate,
+            lastDeliveryDate: g.lastDeliveryDate,
             remainingQuantity: remaining,
             remainingQuantityFiscal: remainingFiscal,
-            status: t.status,
-            computedStatus
+            status: g.status,
+            computedStatus,
+            orderCount: g.transactionIds.length,
         };
     });
 
@@ -186,7 +246,7 @@ export async function getSupplierBalances(): Promise<SupplierBalance[]> {
             entry.materials.push(order.materialName);
         }
 
-        supplierOrderIds.get(order.supplierId)?.push(order.id);
+        supplierOrderIds.get(order.supplierId)?.push(...order.transactionIds);
     }
 
     // 2. Fetch Recent Deliveries for each Balance
@@ -343,6 +403,96 @@ export async function getDeliveriesForTransaction(transactionId: string): Promis
         weightFiscal: d.weight_fiscal ? Number(d.weight_fiscal) : null,
         driverName: d.driver_name,
     }));
+}
+
+// =============================================================================
+// Get Deliveries for Multiple Transactions (consolidated group)
+// =============================================================================
+
+export async function getDeliveriesForTransactions(transactionIds: string[]): Promise<Delivery[]> {
+    if (!transactionIds || transactionIds.length === 0) return [];
+    const supabase = await createClient();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase
+        .from("inbound_deliveries")
+        .select("id, date, plate, weight_measured, weight_fiscal, driver_name")
+        .in("transaction_id", transactionIds)
+        .is("deleted_at", null)
+        .order("date", { ascending: false }) as any);
+
+    if (error || !data) {
+        console.error("Error fetching deliveries for group:", error);
+        return [];
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return data.map((d: any) => ({
+        id: d.id,
+        date: d.date,
+        plate: d.plate,
+        weight: Number(d.weight_measured),
+        weightFiscal: d.weight_fiscal ? Number(d.weight_fiscal) : null,
+        driverName: d.driver_name,
+    }));
+}
+
+// =============================================================================
+// Find Best Transaction for New Delivery (FIFO within consolidated group)
+// =============================================================================
+
+export async function findBestTransactionForDelivery(
+    transactionIds: string[],
+    weightKg: number
+): Promise<{ transactionId: string } | null> {
+    if (!transactionIds || transactionIds.length === 0) return null;
+    const supabase = await createClient();
+
+    // Fetch transactions ordered by date ASC (FIFO)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: transactions } = await (supabase
+        .from("transactions")
+        .select("id, date, quantity, materials(unit)")
+        .in("id", transactionIds)
+        .order("date", { ascending: true }) as any);
+
+    if (!transactions || transactions.length === 0) return null;
+
+    // Fetch existing deliveries for these transactions
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: deliveries } = await (supabase
+        .from("inbound_deliveries")
+        .select("transaction_id, weight_measured")
+        .in("transaction_id", transactionIds)
+        .is("deleted_at", null) as any);
+
+    // Build delivery sum map (in kg)
+    const deliverySumMap = new Map<string, number>();
+    if (deliveries) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const d of deliveries as any[]) {
+            const curr = deliverySumMap.get(d.transaction_id) || 0;
+            deliverySumMap.set(d.transaction_id, curr + Number(d.weight_measured));
+        }
+    }
+
+    // FIFO: find first transaction with remaining capacity
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const t of transactions as any[]) {
+        const materialUnit = t.materials?.unit || 'tonelada';
+        const totalQtyKg = materialUnit === 'tonelada' ? Number(t.quantity) * 1000 : Number(t.quantity);
+        const deliveredKg = deliverySumMap.get(t.id) || 0;
+        const remainingKg = totalQtyKg - deliveredKg;
+
+        // Tolerance: 100kg (0.1 ton)
+        if (remainingKg > 100) {
+            return { transactionId: t.id };
+        }
+    }
+
+    // All transactions full — use the last one (overflow goes to most recent)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { transactionId: (transactions as any[])[transactions.length - 1].id };
 }
 
 // =============================================================================
