@@ -11,6 +11,7 @@ import { FiscalDashboard } from "@/components/financeiro/FiscalDashboard";
 import { ImportFinanceiroDialog } from "@/components/financeiro/ImportFinanceiroDialog";
 import { AdvanceTrackerDialog } from "@/components/financeiro/AdvanceTrackerDialog";
 import { SupplierManagerDialog } from "@/components/financeiro/SupplierManagerDialog";
+import { RecurringBillsView } from "@/components/financeiro/RecurringBillsView";
 import {
     getCategories,
     getMonthSummary,
@@ -21,6 +22,7 @@ import {
     type PaginatedTransactions,
     type TransactionRow
 } from "./actions";
+import { getOverdueBillsCount } from "./recurring-bills-actions";
 
 export default function FinanceiroPage() {
     // Current month/year filter
@@ -30,7 +32,8 @@ export default function FinanceiroPage() {
     const [page, setPage] = useState(1);
     const [searchQuery, setSearchQuery] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
-    const [activeTab, setActiveTab] = useState<"transacoes" | "relatorios" | "fiscal">("transacoes");
+    const [activeTab, setActiveTab] = useState<"transacoes" | "recurring" | "relatorios" | "fiscal">("transacoes");
+    const [overdueBillsCount, setOverdueBillsCount] = useState(0);
 
     // Data states
     const [summary, setSummary] = useState<MonthSummary>({
@@ -72,14 +75,16 @@ export default function FinanceiroPage() {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [summaryData, txData, catData] = await Promise.all([
+            const [summaryData, txData, catData, overdueCount] = await Promise.all([
                 getMonthSummary(month, year, debouncedSearch),
                 getTransactions(month, year, page, 10, debouncedSearch),
                 getCategories(),
+                getOverdueBillsCount(month, year),
             ]);
             setSummary(summaryData);
             setTransactions(txData);
             setCategories(catData);
+            setOverdueBillsCount(overdueCount);
         } catch (error) {
             console.error("Error loading data:", error);
         } finally {
@@ -228,6 +233,20 @@ export default function FinanceiroPage() {
                         Transações
                     </button>
                     <button
+                        onClick={() => setActiveTab("recurring")}
+                        className={`relative py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "recurring"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+                            }`}
+                    >
+                        Contas Fixas
+                        {overdueBillsCount > 0 && (
+                            <span className="absolute -top-0.5 -right-3 flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-bold text-white bg-red-500 rounded-full">
+                                {overdueBillsCount}
+                            </span>
+                        )}
+                    </button>
+                    <button
                         onClick={() => setActiveTab("relatorios")}
                         className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "relatorios"
                             ? "border-primary text-primary"
@@ -249,7 +268,13 @@ export default function FinanceiroPage() {
             </div>
 
             {/* Tab Content */}
-            {activeTab === "relatorios" ? (
+            {activeTab === "recurring" ? (
+                <RecurringBillsView
+                    initialMonth={month}
+                    initialYear={year}
+                    categories={categories}
+                />
+            ) : activeTab === "relatorios" ? (
                 <FinancialAnalysisView
                     month={month}
                     year={year}
