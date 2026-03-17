@@ -654,8 +654,7 @@ export async function createTransaction(formData: FormData): Promise<{
     // Parse quantity if provided (needed for Balança to pick up raw material orders)
     const quantity = quantityRaw ? parseFloat(quantityRaw) : null;
     const isCharcoal = finalCategoryId === "raw_material_charcoal";
-    // Charcoal doesn't go through Balança (stock updated directly or via advance)
-    const transactionQuantity = isCharcoal ? null : (quantity && quantity > 0 ? quantity : null);
+    const transactionQuantity = quantity && quantity > 0 ? quantity : null;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: insertedTx, error } = await (supabase.from("transactions") as any).insert({
@@ -675,6 +674,36 @@ export async function createTransaction(formData: FormData): Promise<{
     if (error) {
         console.error("Error creating transaction:", error);
         return { success: false, error: error.message };
+    }
+
+    if (isCharcoal && quantity && quantity > 0 && insertedTx) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: charcoalMaterial } = await (supabase
+                .from("materials")
+                .select("id, current_stock")
+                .or("name.ilike.%carvão%,name.ilike.%carvao%")
+                .limit(1)
+                .single() as any);
+            if (charcoalMaterial) {
+                const currentStock = Number(charcoalMaterial.current_stock) || 0;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("materials") as any).update({ current_stock: currentStock + quantity }).eq("id", charcoalMaterial.id);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.from("inventory_movements") as any).insert({
+                    material_id: charcoalMaterial.id,
+                    date: date,
+                    quantity: quantity,
+                    unit_price: amount / quantity,
+                    total_value: amount,
+                    movement_type: "compra",
+                    reference_id: insertedTx.id,
+                    notes: `Compra Carvão - ${quantity} MDC`,
+                });
+            }
+        } catch (err) {
+            console.error("Erro ao criar movement de carvão:", err);
+        }
     }
 
     revalidatePath("/financeiro");

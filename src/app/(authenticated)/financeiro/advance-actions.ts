@@ -488,7 +488,7 @@ export async function finalizeAdvanceWithComplement(params: {
 
     // 1. Get the advance to verify status and get supplier info
     const { data: advance, error: advError } = await (supabase.from("carvao_advances") as any)
-        .select("id, status, advance_amount, carvao_supplier_id, supplier_id")
+        .select("id, status, advance_amount, advance_transaction_id, carvao_supplier_id, supplier_id")
         .eq("id", params.advanceId)
         .single();
 
