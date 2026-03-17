@@ -118,9 +118,15 @@ export async function matchTicketsWithOrders(
             if (clean.includes(key) || key.includes(clean)) return val;
         }
         // Keyword matching
-        if (clean.includes('minerio') || clean.includes('minério') || clean.includes('ferro')) {
+        // Minério de Ferro — match específico antes do genérico
+        if (clean.includes('minerio de ferro') || clean.includes('minério de ferro')) {
             for (const [key, val] of materialMap.entries()) {
-                if (key.includes('minério') || key.includes('minerio') || key.includes('ferro')) return val;
+                if (key.includes('minério de ferro') || key.includes('minerio de ferro')) return val;
+            }
+        }
+        if (clean.includes('minerio') || clean.includes('minério')) {
+            for (const [key, val] of materialMap.entries()) {
+                if (key.includes('minério') || key.includes('minerio')) return val;
             }
         }
         if (clean.includes('bauxita')) {
@@ -149,10 +155,10 @@ export async function matchTicketsWithOrders(
                 if (key.includes('fundente') || key.includes('calcário') || key.includes('calcario')) return val;
             }
         }
-        // Lingoteira → ferro-gusa (saída de produto)
-        if (clean.includes('lingoteira') || clean.includes('gusa')) {
+        // Lingoteira → mapear para Minério de Ferro (entrega de matéria prima)
+        if (clean.includes('lingoteira')) {
             for (const [key, val] of materialMap.entries()) {
-                if (key.includes('gusa')) return val;
+                if (key.includes('minério de ferro') || key.includes('minerio de ferro')) return val;
             }
         }
         return null;
