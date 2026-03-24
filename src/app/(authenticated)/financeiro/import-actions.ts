@@ -385,28 +385,38 @@ export async function importSheetTransactions(
             else if (statusLower.includes("parc")) dbStatus = "parcial";
             else if (statusLower.includes("cancel")) dbStatus = "cancelado";
 
-            // Check for duplicate (same date + description + amount + type)
-            const { data: existing } = await (supabase
+            // Determine transaction classification early (needed by duplicate check)
+            const isCharcoal = finalCategoryId === "raw_material_charcoal";
+            const isRawMaterial = RAW_MATERIAL_SLUGS.has(finalCategoryId || "") || !!finalMaterialId;
+            const isAdvance = tx.isAdvance && isCharcoal;
+
+            // Check for duplicate
+            // For raw materials with supplier: require same date + type + amount + description + supplier_id
+            // For other transactions: same date + type + amount + description
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let dupQuery = (supabase
                 .from("transactions")
                 .select("id")
                 .eq("date", tx.date)
                 .eq("type", tx.type)
                 .eq("amount", tx.amount)
                 .ilike("description", tx.description)
-                .is("ofx_transaction_id", null) // Only check manually entered / sheet-imported
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .limit(1) as any);
+                .is("ofx_transaction_id", null) as any);
+
+            // For raw materials with a supplier, also match supplier_id to avoid
+            // blocking a legitimate purchase from a different supplier on the same day
+            if (isRawMaterial && tx.supplierId) {
+                dupQuery = dupQuery.eq("supplier_id", tx.supplierId);
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: existing } = await (dupQuery.limit(1) as any);
 
             if (existing && existing.length > 0) {
                 result.skipped++;
                 result.errors.push(`"${tx.description}" (${tx.date}): Já existe no sistema`);
                 continue;
             }
-
-            // Determine if this is a charcoal purchase (stock updated immediately)
-            const isCharcoal = finalCategoryId === "raw_material_charcoal";
-            const isRawMaterial = RAW_MATERIAL_SLUGS.has(finalCategoryId || "") || !!finalMaterialId;
-            const isAdvance = tx.isAdvance && isCharcoal;
 
             // For raw materials: set quantity appropriately
             // Charcoal: quantity=null in transaction (won't appear in Balança)
