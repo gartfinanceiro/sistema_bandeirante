@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useTransition } from "react";
 import {
     getMonthlyBillsStatus,
+    unlinkBillTransaction,
     type MonthlyBillStatus,
 } from "@/app/(authenticated)/financeiro/recurring-bills-actions";
 import { getSuppliers } from "@/app/(authenticated)/estoque/actions";
 import type { CategoryGroup } from "@/app/(authenticated)/financeiro/actions";
 import { RecurringBillDialog } from "./RecurringBillDialog";
+import { LinkTransactionDialog } from "./LinkTransactionDialog";
 
 interface RecurringBillsViewProps {
     initialMonth: number;
@@ -27,6 +29,8 @@ export function RecurringBillsView({
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingBill, setEditingBill] = useState<MonthlyBillStatus | null>(null);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
+    const [linkingBill, setLinkingBill] = useState<MonthlyBillStatus | null>(null);
+    const [isPending, startTransition] = useTransition();
 
     const loadBills = useCallback(async () => {
         setIsLoading(true);
@@ -50,7 +54,7 @@ export function RecurringBillsView({
             .catch(() => {});
     }, []);
 
-    // Navegação de mês
+    // Navegacao de mes
     function handlePrevMonth() {
         if (month === 1) {
             setMonth(12);
@@ -90,7 +94,7 @@ export function RecurringBillsView({
     }
 
     function formatDate(dateStr: string) {
-        const [y, m, d] = dateStr.split("-");
+        const [, m, d] = dateStr.split("-");
         return `${d}/${m}`;
     }
 
@@ -104,9 +108,26 @@ export function RecurringBillsView({
         setIsDialogOpen(true);
     }
 
+    function handleLinkBill(bill: MonthlyBillStatus, e: React.MouseEvent) {
+        e.stopPropagation();
+        setLinkingBill(bill);
+    }
+
+    function handleUnlink(bill: MonthlyBillStatus, e: React.MouseEvent) {
+        e.stopPropagation();
+        if (!confirm(`Desvincular o pagamento de "${bill.name}"?`)) return;
+
+        startTransition(async () => {
+            const result = await unlinkBillTransaction(bill.id, month, year);
+            if (result.success) {
+                loadBills();
+            }
+        });
+    }
+
     return (
         <div className="space-y-4 animate-in fade-in duration-200">
-            {/* Seletor de mês + Resumo */}
+            {/* Seletor de mes + Resumo */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-center gap-3">
                     <button
@@ -229,11 +250,32 @@ export function RecurringBillsView({
                                             {bill.categoryName}
                                         </span>
                                     )}
+                                    {bill.status === "paid" && bill.linkedBy && (
+                                        <span
+                                            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                                bill.linkedBy === "manual"
+                                                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                                                    : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                                            }`}
+                                            title={
+                                                bill.linkedBy === "manual"
+                                                    ? "Vinculado manualmente"
+                                                    : "Vinculado automaticamente"
+                                            }
+                                        >
+                                            {bill.linkedBy === "manual" ? "manual" : "auto"}
+                                        </span>
+                                    )}
                                 </div>
                                 <div className="text-sm text-muted-foreground">
                                     {bill.status === "paid" ? (
                                         <span className="text-green-600">
                                             {formatCurrency(bill.paidAmount!)} — Pago em {formatDate(bill.paidDate!)}
+                                            {bill.transactionDescription && (
+                                                <span className="text-muted-foreground ml-1 text-xs">
+                                                    ({bill.transactionDescription})
+                                                </span>
+                                            )}
                                         </span>
                                     ) : bill.status === "overdue" ? (
                                         <span className="text-red-600 font-medium">
@@ -245,23 +287,50 @@ export function RecurringBillsView({
                                 </div>
                             </div>
 
-                            {/* Valor esperado */}
-                            <div className="text-right flex-shrink-0">
-                                <div className="text-sm font-medium text-foreground">
-                                    {bill.expectedAmount
-                                        ? formatCurrency(bill.expectedAmount)
-                                        : "Variável"}
-                                </div>
-                                {bill.isFixedAmount && (
-                                    <div className="text-xs text-muted-foreground">Valor fixo</div>
+                            {/* Action buttons */}
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                                {bill.status === "paid" && (
+                                    <button
+                                        onClick={(e) => handleUnlink(bill, e)}
+                                        disabled={isPending}
+                                        className="h-7 px-2 rounded text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50"
+                                        title="Desvincular pagamento"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878l4.242 4.242M21 21l-4.879-4.879" />
+                                        </svg>
+                                    </button>
                                 )}
+                                {(bill.status === "pending" || bill.status === "overdue") && (
+                                    <button
+                                        onClick={(e) => handleLinkBill(bill, e)}
+                                        className="h-7 px-2.5 rounded text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                                        title="Vincular pagamento manualmente"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                        </svg>
+                                    </button>
+                                )}
+
+                                {/* Valor esperado */}
+                                <div className="text-right min-w-[80px]">
+                                    <div className="text-sm font-medium text-foreground">
+                                        {bill.expectedAmount
+                                            ? formatCurrency(bill.expectedAmount)
+                                            : "Variavel"}
+                                    </div>
+                                    {bill.isFixedAmount && (
+                                        <div className="text-xs text-muted-foreground">Valor fixo</div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     ))}
                 </div>
             )}
 
-            {/* Dialog */}
+            {/* Dialogs */}
             <RecurringBillDialog
                 isOpen={isDialogOpen}
                 onClose={() => {
@@ -277,6 +346,23 @@ export function RecurringBillsView({
                     loadBills();
                 }}
             />
+
+            {linkingBill && (
+                <LinkTransactionDialog
+                    isOpen={!!linkingBill}
+                    onClose={() => setLinkingBill(null)}
+                    billId={linkingBill.id}
+                    billName={linkingBill.name}
+                    billCategoryId={linkingBill.categoryId}
+                    billSupplierId={linkingBill.supplierId}
+                    month={month}
+                    year={year}
+                    onLinked={() => {
+                        setLinkingBill(null);
+                        loadBills();
+                    }}
+                />
+            )}
         </div>
     );
 }
