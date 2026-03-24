@@ -14,6 +14,7 @@ import {
     createAdvancePayment,
     getPendingAdvancesAll,
     finalizeAdvanceWithComplement,
+    recoverTransactionId,
     type CarvaoSupplierOption,
     type AdvanceListItem,
 } from "@/app/(authenticated)/financeiro/advance-actions";
@@ -352,9 +353,38 @@ export function TransactionDialog({
                         setError(advResult.error || "Transação criada, mas erro ao registrar adiantamento");
                     }
                 } else if (txResult.success) {
-                    // Transaction created but no ID returned - still close
-                    resetForm();
-                    onClose();
+                    // Transaction created but no ID returned — try to recover
+                    try {
+                        const recoveredId = await recoverTransactionId(date, parseFloat(amount), description);
+                        if (recoveredId) {
+                            const advResult = await createAdvancePayment({
+                                advanceTransactionId: recoveredId,
+                                advanceAmount: parseFloat(amount),
+                                advanceDate: date,
+                                supplierId: selectedSupplierId || null,
+                                carvaoSupplierId: selectedCarvaoSupplierId || null,
+                                notes: description ? `Adiantamento: ${description}` : null,
+                            });
+                            if (advResult.success) {
+                                resetForm();
+                                onClose();
+                            } else {
+                                setError("Transação criada, mas erro ao registrar adiantamento: " + (advResult.error || "Erro desconhecido"));
+                            }
+                        } else {
+                            setError(
+                                "Transação criada no financeiro, mas o ID não foi retornado e não foi possível recuperá-lo. " +
+                                "O adiantamento NÃO foi registrado no módulo de carvão. " +
+                                "Verifique a transação no financeiro e registre o adiantamento manualmente."
+                            );
+                        }
+                    } catch (recoveryErr) {
+                        console.error("Recovery attempt failed:", recoveryErr);
+                        setError(
+                            "Transação criada no financeiro, mas erro ao registrar adiantamento. " +
+                            "Verifique a transação no financeiro e registre o adiantamento manualmente."
+                        );
+                    }
                 } else {
                     setError(txResult.error || "Erro ao criar transação");
                 }

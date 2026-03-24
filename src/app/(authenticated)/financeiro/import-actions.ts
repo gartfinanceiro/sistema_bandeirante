@@ -455,24 +455,36 @@ export async function importSheetTransactions(
             const insertedId = (insertedTx as any)?.id;
 
             // For Charcoal Advance: create advance record (NO stock movement)
+            // Atomic: if advance creation fails, rollback the transaction
             if (isAdvance && insertedId) {
-                try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { data: { user } } = await supabase.auth.getUser() as any;
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { error: advError } = await (supabase.from("carvao_advances") as any).insert({
+                    advance_transaction_id: insertedId,
+                    advance_amount: tx.amount,
+                    advance_date: tx.date,
+                    supplier_id: tx.supplierId || null,
+                    carvao_supplier_id: tx.carvaoSupplierId || null,
+                    status: "adiantamento_pago",
+                    notes: `Adiantamento importado da planilha: ${tx.description}`,
+                    created_by: user?.id || null,
+                });
+
+                if (advError) {
+                    console.error("Advance creation error, rolling back transaction:", advError);
+                    // Rollback: delete the orphan transaction
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    const { data: { user } } = await supabase.auth.getUser() as any;
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    await (supabase.from("carvao_advances") as any).insert({
-                        advance_transaction_id: insertedId,
-                        advance_amount: tx.amount,
-                        advance_date: tx.date,
-                        supplier_id: tx.supplierId || null,
-                        carvao_supplier_id: tx.carvaoSupplierId || null,
-                        status: "adiantamento_pago",
-                        notes: `Adiantamento importado da planilha: ${tx.description}`,
-                        created_by: user?.id || null,
-                    });
-                } catch (advErr) {
-                    result.errors.push(`"${tx.description}": Transação criada, mas erro ao registrar adiantamento`);
-                    console.error("Advance creation error:", advErr);
+                    await (supabase.from("transactions") as any)
+                        .delete()
+                        .eq("id", insertedId);
+                    result.errors.push(
+                        `"${tx.description}": Erro ao registrar adiantamento de carvão (transação revertida). ` +
+                        `Erro: ${advError.message}`
+                    );
+                    result.skipped++;
+                    continue;
                 }
             }
             // For Charcoal (non-advance): immediately update stock

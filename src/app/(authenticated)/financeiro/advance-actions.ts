@@ -584,3 +584,36 @@ export async function finalizeAdvanceWithComplement(params: {
     revalidatePath("/estoque");
     return { success: true };
 }
+
+// =============================================================================
+// Recover transaction ID — used when createTransaction returns success but no ID
+// =============================================================================
+
+export async function recoverTransactionId(
+    date: string,
+    amount: number,
+    description: string
+): Promise<string | null> {
+    try {
+        const supabase = await createClient();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data } = await (supabase as any)
+            .from("transactions")
+            .select("id")
+            .eq("date", date)
+            .eq("amount", amount)
+            .eq("type", "saida")
+            .ilike("description", description)
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+        if (data && data.length > 0) {
+            return data[0].id;
+        }
+        return null;
+    } catch (err) {
+        console.error("Error recovering transaction ID:", err);
+        return null;
+    }
+}
