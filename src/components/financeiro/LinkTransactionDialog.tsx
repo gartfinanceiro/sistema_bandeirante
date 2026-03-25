@@ -17,6 +17,8 @@ interface LinkTransactionDialogProps {
     month: number;
     year: number;
     onLinked: () => void;
+    replaceMode?: boolean;
+    currentTransactionId?: string | null;
 }
 
 export function LinkTransactionDialog({
@@ -29,6 +31,8 @@ export function LinkTransactionDialog({
     month,
     year,
     onLinked,
+    replaceMode = false,
+    currentTransactionId = null,
 }: LinkTransactionDialogProps) {
     const [transactions, setTransactions] = useState<AvailableTransaction[]>([]);
     const [allTransactions, setAllTransactions] = useState<AvailableTransaction[]>([]);
@@ -47,8 +51,8 @@ export function LinkTransactionDialog({
 
         // Fetch filtered (by category/supplier) and all transactions in parallel
         Promise.all([
-            getAvailableTransactionsForLinking(month, year, billCategoryId, billSupplierId),
-            getAvailableTransactionsForLinking(month, year),
+            getAvailableTransactionsForLinking(month, year, billCategoryId, billSupplierId, replaceMode ? billId : null),
+            getAvailableTransactionsForLinking(month, year, null, null, replaceMode ? billId : null),
         ])
             .then(([filtered, all]) => {
                 setTransactions(filtered);
@@ -111,7 +115,7 @@ export function LinkTransactionDialog({
                     <div className="flex items-center justify-between">
                         <div>
                             <h2 className="text-lg font-semibold text-foreground">
-                                Vincular Pagamento
+                                {replaceMode ? "Corrigir Vínculo" : "Vincular Pagamento"}
                             </h2>
                             <p className="text-sm text-muted-foreground">
                                 {billName} — {monthLabel}
@@ -184,11 +188,22 @@ export function LinkTransactionDialog({
                             {filtered.map((tx) => (
                                 <div
                                     key={tx.id}
-                                    className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors"
+                                    className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                                        tx.id === currentTransactionId
+                                            ? "border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/10"
+                                            : "border-border bg-card hover:bg-accent/50"
+                                    }`}
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <div className="font-medium text-sm text-foreground truncate">
-                                            {tx.description}
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-medium text-sm text-foreground truncate">
+                                                {tx.description}
+                                            </span>
+                                            {tx.id === currentTransactionId && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 flex-shrink-0">
+                                                    atual
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
                                             <span>{formatDate(tx.date)}</span>

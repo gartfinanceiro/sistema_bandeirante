@@ -30,6 +30,7 @@ export function RecurringBillsView({
     const [editingBill, setEditingBill] = useState<MonthlyBillStatus | null>(null);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
     const [linkingBill, setLinkingBill] = useState<MonthlyBillStatus | null>(null);
+    const [replaceMode, setReplaceMode] = useState(false);
     const [isPending, startTransition] = useTransition();
 
     const loadBills = useCallback(async () => {
@@ -110,6 +111,13 @@ export function RecurringBillsView({
 
     function handleLinkBill(bill: MonthlyBillStatus, e: React.MouseEvent) {
         e.stopPropagation();
+        setReplaceMode(false);
+        setLinkingBill(bill);
+    }
+
+    function handleReplaceBill(bill: MonthlyBillStatus, e: React.MouseEvent) {
+        e.stopPropagation();
+        setReplaceMode(true);
         setLinkingBill(bill);
     }
 
@@ -290,16 +298,28 @@ export function RecurringBillsView({
                             {/* Action buttons */}
                             <div className="flex items-center gap-2 flex-shrink-0">
                                 {bill.status === "paid" && (
-                                    <button
-                                        onClick={(e) => handleUnlink(bill, e)}
-                                        disabled={isPending}
-                                        className="h-7 px-2 rounded text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50"
-                                        title="Desvincular pagamento"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878l4.242 4.242M21 21l-4.879-4.879" />
-                                        </svg>
-                                    </button>
+                                    <>
+                                        <button
+                                            onClick={(e) => handleReplaceBill(bill, e)}
+                                            disabled={isPending}
+                                            className="h-7 px-2 rounded text-xs text-muted-foreground hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors disabled:opacity-50"
+                                            title="Corrigir vínculo"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                            </svg>
+                                        </button>
+                                        <button
+                                            onClick={(e) => handleUnlink(bill, e)}
+                                            disabled={isPending}
+                                            className="h-7 px-2 rounded text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50"
+                                            title="Desvincular pagamento"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878l4.242 4.242M21 21l-4.879-4.879" />
+                                            </svg>
+                                        </button>
+                                    </>
                                 )}
                                 {(bill.status === "pending" || bill.status === "overdue") && (
                                     <button
@@ -350,15 +370,18 @@ export function RecurringBillsView({
             {linkingBill && (
                 <LinkTransactionDialog
                     isOpen={!!linkingBill}
-                    onClose={() => setLinkingBill(null)}
+                    onClose={() => { setLinkingBill(null); setReplaceMode(false); }}
                     billId={linkingBill.id}
                     billName={linkingBill.name}
                     billCategoryId={linkingBill.categoryId}
                     billSupplierId={linkingBill.supplierId}
                     month={month}
                     year={year}
+                    replaceMode={replaceMode}
+                    currentTransactionId={replaceMode ? linkingBill.transactionId : null}
                     onLinked={() => {
                         setLinkingBill(null);
+                        setReplaceMode(false);
                         loadBills();
                     }}
                 />

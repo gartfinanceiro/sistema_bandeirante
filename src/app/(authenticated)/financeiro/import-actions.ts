@@ -419,11 +419,11 @@ export async function importSheetTransactions(
             }
 
             // For raw materials: set quantity appropriately
-            // Charcoal: quantity=null in transaction (won't appear in Balança)
             // Charcoal advance: quantity=null (volume unknown until discharge)
+            // Charcoal (non-advance): quantity=value (will update stock immediately)
             // Ore/Flux: quantity=value (will appear in Balança as purchase order)
             const transactionQuantity = isRawMaterial && tx.quantity && !isAdvance
-                ? (isCharcoal ? null : tx.quantity)
+                ? tx.quantity
                 : null;
 
             // Insert

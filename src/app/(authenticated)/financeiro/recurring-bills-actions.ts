@@ -219,28 +219,55 @@ export async function getMonthlyBillsStatus(
             }
         }
 
-        // B. No existing link — try auto-match
+        // B. No existing link — try auto-match with scoring
         if (!tx && monthTransactions) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const candidates = (monthTransactions as any[]).filter((t: any) => {
-                // Must not be linked to another bill
-                if (linkedTxIds.has(t.id) || newlyLinkedTxIds.has(t.id)) return false;
-                // Match by category
-                if (bill.category_id && t.category_id !== bill.category_id) return false;
-                // Match by supplier (if defined on bill)
-                if (bill.supplier_id && t.supplier_id !== bill.supplier_id) return false;
-                // If bill has no category, skip auto-match (too ambiguous)
-                if (!bill.category_id) return false;
-                return true;
-            });
+            const scored = (monthTransactions as any[])
+                .filter((t: any) => {
+                    if (linkedTxIds.has(t.id) || newlyLinkedTxIds.has(t.id)) return false;
+                    if (bill.category_id && t.category_id !== bill.category_id) return false;
+                    if (bill.supplier_id && t.supplier_id !== bill.supplier_id) return false;
+                    if (!bill.category_id) return false;
+                    return true;
+                })
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                .map((t: any) => {
+                    let score = 0;
 
-            if (candidates.length > 0) {
-                // Pick the most recent (already sorted desc by date)
-                const bestMatch = candidates[0];
-                tx = bestMatch;
+                    // Amount match (only for fixed-amount bills with expected_amount set)
+                    if (bill.is_fixed_amount && bill.expected_amount && t.amount) {
+                        const ratio = Math.abs(Number(t.amount) - Number(bill.expected_amount)) / Number(bill.expected_amount);
+                        if (ratio <= 0.05) score += 100;
+                        else if (ratio <= 0.20) score += 50;
+                    }
+
+                    // Supplier match (already guaranteed by filter, award points)
+                    if (bill.supplier_id && t.supplier_id === bill.supplier_id) score += 60;
+
+                    // Bill name words found in transaction description
+                    const billWords = (bill.name as string).toLowerCase().split(/\s+/).filter((w: string) => w.length >= 4);
+                    const desc = ((t.description as string) || "").toLowerCase();
+                    if (billWords.some((w: string) => desc.includes(w))) score += 30;
+
+                    return { t, score };
+                });
+
+            // Sort descending by score
+            scored.sort((a, b) => b.score - a.score);
+
+            const MIN_SCORE = 60;
+            const MIN_LEAD = 30;
+            const best = scored[0];
+            const second = scored[1];
+
+            const passesMinScore = best && best.score >= MIN_SCORE;
+            const passesLead = !second || (best.score - second.score) >= MIN_LEAD;
+
+            if (passesMinScore && passesLead) {
+                tx = best.t;
                 linkedBy = "auto";
-                newlyLinkedTxIds.add(bestMatch.id);
-                linkedTxIds.add(bestMatch.id);
+                newlyLinkedTxIds.add(best.t.id);
+                linkedTxIds.add(best.t.id);
 
                 // Persist the auto-link (fire-and-forget)
                 try {
@@ -249,7 +276,7 @@ export async function getMonthlyBillsStatus(
                         .from("recurring_bill_payments")
                         .upsert({
                             recurring_bill_id: bill.id,
-                            transaction_id: bestMatch.id,
+                            transaction_id: best.t.id,
                             reference_month: month,
                             reference_year: year,
                             linked_by: "auto",
@@ -379,7 +406,8 @@ export async function getAvailableTransactionsForLinking(
     month: number,
     year: number,
     billCategoryId?: string | null,
-    billSupplierId?: string | null
+    billSupplierId?: string | null,
+    excludeBillId?: string | null
 ): Promise<AvailableTransaction[]> {
     const supabase = await createClient();
 
@@ -398,6 +426,20 @@ export async function getAvailableTransactionsForLinking(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const linkedIds = new Set((links || []).map((l: any) => l.transaction_id));
+
+    // In replace-mode: remove this bill's own current transaction from the exclusion set
+    // so it appears as a selectable option in the dialog
+    if (excludeBillId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: currentLink } = await (supabase as any)
+            .from("recurring_bill_payments")
+            .select("transaction_id")
+            .eq("recurring_bill_id", excludeBillId)
+            .eq("reference_month", month)
+            .eq("reference_year", year)
+            .limit(1);
+        if (currentLink?.[0]) linkedIds.delete(currentLink[0].transaction_id);
+    }
 
     // Fetch transactions for the month
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
