@@ -140,10 +140,10 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
             const matched = await matchTicketsWithOrders(tickets);
             setMatchedTickets(matched);
 
-            // Pre-select all matched tickets
+            // Pre-select matched and partial tickets
             const preSelected = new Set<number>();
             matched.forEach((t, i) => {
-                if (t.matchStatus === "matched") preSelected.add(i);
+                if (t.matchStatus === "matched" || t.matchStatus === "partial") preSelected.add(i);
             });
             setSelectedTickets(preSelected);
 
@@ -181,12 +181,13 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
     }
 
     function toggleAll() {
-        if (selectedTickets.size === matchedTickets.filter(t => t.matchStatus === "matched").length) {
+        const selectableCount = matchedTickets.filter(t => t.matchStatus !== "unmatched").length;
+        if (selectedTickets.size === selectableCount) {
             setSelectedTickets(new Set());
         } else {
             const all = new Set<number>();
             matchedTickets.forEach((t, i) => {
-                if (t.matchStatus === "matched") all.add(i);
+                if (t.matchStatus !== "unmatched") all.add(i);
             });
             setSelectedTickets(all);
         }
@@ -339,7 +340,7 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
                                             <th className="px-3 py-2 text-left">
                                                 <input
                                                     type="checkbox"
-                                                    checked={selectedTickets.size === matchedCount && matchedCount > 0}
+                                                    checked={selectedTickets.size === (matchedCount + partialCount) && (matchedCount + partialCount) > 0}
                                                     onChange={toggleAll}
                                                     className="rounded"
                                                 />
@@ -361,8 +362,10 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
                                                 className={`${
                                                     ticket.matchStatus === 'unmatched'
                                                         ? 'bg-red-50/50'
-                                                        : ticket.matchStatus === 'partial'
+                                                        : ticket.matchStatus === 'partial' && selectedTickets.has(i)
                                                         ? 'bg-yellow-50/50'
+                                                        : ticket.matchStatus === 'partial'
+                                                        ? 'bg-yellow-50/30'
                                                         : selectedTickets.has(i) ? 'bg-green-50/30' : ''
                                                 } hover:bg-gray-50`}
                                             >
@@ -371,7 +374,7 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
                                                         type="checkbox"
                                                         checked={selectedTickets.has(i)}
                                                         onChange={() => toggleTicket(i)}
-                                                        disabled={ticket.matchStatus !== 'matched'}
+                                                        disabled={ticket.matchStatus === 'unmatched'}
                                                         className="rounded"
                                                     />
                                                 </td>
@@ -475,6 +478,10 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
                         >
                             <Upload className="w-4 h-4" />
                             Importar {selectedTickets.size} Entregas
+                            {(() => {
+                                const partialSelected = matchedTickets.filter((t, i) => selectedTickets.has(i) && t.matchStatus === 'partial').length;
+                                return partialSelected > 0 ? ` (${partialSelected} sem ordem)` : '';
+                            })()}
                         </button>
                     )}
                     {step === "done" && (

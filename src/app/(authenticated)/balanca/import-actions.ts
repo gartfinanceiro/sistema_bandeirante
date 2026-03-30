@@ -397,47 +397,80 @@ export async function importMatchedTickets(
     };
 
     for (const ticket of tickets) {
-        if (!ticket.transactionId || ticket.matchStatus !== 'matched') {
+        // Skip unmatched tickets (no supplier or material identified)
+        if (ticket.matchStatus === 'unmatched') {
+            result.skipped++;
+            continue;
+        }
+
+        const isLinked = ticket.matchStatus === 'matched' && !!ticket.transactionId;
+        const isPartial = ticket.matchStatus === 'partial' && !!ticket.materialId && !!ticket.supplierId;
+
+        if (!isLinked && !isPartial) {
             result.skipped++;
             continue;
         }
 
         try {
-            // 1. Get material_id and unit from transaction + material
-            const { data: tx, error: txError } = await (supabase
-                .from("transactions")
-                .select("material_id, materials(unit)")
-                .eq("id", ticket.transactionId)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .single() as any);
+            // 1. Resolve material info
+            let materialId: string;
+            let materialUnit = 'tonelada';
 
-            if (txError || !tx) {
-                result.errors.push(`Ticket ${ticket.ticketNumber}: Transação não encontrada`);
-                result.skipped++;
-                continue;
+            if (isLinked) {
+                // Linked: get material from transaction
+                const { data: tx, error: txError } = await (supabase
+                    .from("transactions")
+                    .select("material_id, materials(unit)")
+                    .eq("id", ticket.transactionId!)
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    .single() as any);
+
+                if (txError || !tx) {
+                    result.errors.push(`Ticket ${ticket.ticketNumber}: Transação não encontrada`);
+                    result.skipped++;
+                    continue;
+                }
+                materialId = tx.material_id;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                materialUnit = (tx as any).materials?.unit || 'tonelada';
+            } else {
+                // Partial: get material unit directly
+                materialId = ticket.materialId!;
+                const { data: matInfo } = await supabase
+                    .from("materials")
+                    .select("unit")
+                    .eq("id", materialId)
+                    .single();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                materialUnit = (matInfo as any)?.unit || 'tonelada';
             }
 
-            const materialId = tx.material_id;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const materialUnit = (tx as any).materials?.unit || 'tonelada';
-            // Converter peso de kg para a unidade do material (tonelada = /1000, kg = /1)
             const quantityInUnit = materialUnit === 'tonelada' ? ticket.weightKg / 1000 : ticket.weightKg;
 
-            // 2. Check for duplicate (same transaction + plate + weight + approximate date)
+            // 2. Check for duplicate
             const ticketDate = new Date(ticket.date + "T12:00:00Z").toISOString();
             const dateStart = new Date(ticket.date + "T00:00:00Z").toISOString();
             const dateEnd = new Date(ticket.date + "T23:59:59Z").toISOString();
-            const { data: existing } = await (supabase
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let dupQuery = (supabase
                 .from("inbound_deliveries")
                 .select("id")
-                .eq("transaction_id", ticket.transactionId)
                 .eq("plate", ticket.plate)
                 .eq("weight_measured", ticket.weightKg)
                 .gte("date", dateStart)
                 .lte("date", dateEnd)
-                .is("deleted_at", null)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .limit(1) as any);
+                .is("deleted_at", null) as any);
+
+            if (isLinked) {
+                dupQuery = dupQuery.eq("transaction_id", ticket.transactionId);
+            } else {
+                dupQuery = dupQuery.is("transaction_id", null)
+                    .eq("material_id", materialId)
+                    .eq("supplier_id", ticket.supplierId);
+            }
+
+            const { data: existing } = await dupQuery.limit(1);
 
             if (existing && existing.length > 0) {
                 result.skipped++;
@@ -446,9 +479,11 @@ export async function importMatchedTickets(
             }
 
             // 3. Insert inbound delivery
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { error: deliveryError } = await (supabase.from("inbound_deliveries") as any).insert({
-                transaction_id: ticket.transactionId,
+                transaction_id: ticket.transactionId || null,
+                material_id: materialId,
+                supplier_id: ticket.supplierId || null,
                 plate: ticket.plate,
                 weight_measured: ticket.weightKg,
                 weight_fiscal: null,
@@ -462,26 +497,28 @@ export async function importMatchedTickets(
                 continue;
             }
 
-            // 4. Create inventory movement (quantity na unidade do material)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // 4. Create inventory movement
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("inventory_movements") as any).insert({
                 material_id: materialId,
                 quantity: quantityInUnit,
                 movement_type: "compra",
-                reference_id: ticket.transactionId,
+                reference_id: ticket.transactionId || null,
                 date: ticketDate,
-                notes: `Importação Balança: Placa ${ticket.plate} — Ticket #${ticket.ticketNumber} (${ticket.weightKg} kg)`,
+                notes: isLinked
+                    ? `Importação Balança: Placa ${ticket.plate} — Ticket #${ticket.ticketNumber} (${ticket.weightKg} kg)`
+                    : `Importação Balança (sem ordem): Placa ${ticket.plate} — Ticket #${ticket.ticketNumber} (${ticket.weightKg} kg)`,
             });
 
-            // 5. Update material stock (na unidade do material)
+            // 5. Update material stock
             const { data: matCheck } = await supabase
                 .from("materials")
                 .select("current_stock")
                 .eq("id", materialId)
                 .single();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const currentStock = Number((matCheck as any)?.current_stock) || 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("materials") as any)
                 .update({ current_stock: currentStock + quantityInUnit })
                 .eq("id", materialId);

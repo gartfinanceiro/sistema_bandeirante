@@ -304,7 +304,7 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
         // 1. Get Transaction info (including material unit)
         const { data: tx, error: txError } = await (supabase
             .from("transactions")
-            .select("material_id, materials(name, unit)")
+            .select("material_id, supplier_id, materials(name, unit)")
             .eq("id", transactionId)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
@@ -321,6 +321,8 @@ export async function createInboundDelivery(formData: FormData): Promise<{ succe
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: deliveryError } = await (supabase.from("inbound_deliveries") as any).insert({
             transaction_id: transactionId,
+            material_id: materialId,
+            supplier_id: tx.supplier_id || null,
             plate: plate,
             weight_measured: weight,
             weight_fiscal: weightFiscal,
@@ -521,7 +523,7 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
         // Get old delivery to calculate stock difference
         const { data: oldDelivery, error: fetchError } = await (supabase
             .from("inbound_deliveries")
-            .select("weight_measured, transaction_id")
+            .select("weight_measured, transaction_id, material_id")
             .eq("id", id)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
@@ -541,7 +543,7 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
                 weight_measured: newWeight,
                 weight_fiscal: newWeightFiscal,
                 driver_name: driver || null,
-                date: new Date(date + "T12:00:00Z").toISOString(), // Persistence (Noon UTC to safely allow TZ shifts)
+                date: new Date(date + "T12:00:00Z").toISOString(),
             })
             .eq("id", id);
 
@@ -551,28 +553,37 @@ export async function updateDelivery(formData: FormData): Promise<{ success: boo
 
         // Adjust stock if weight changed
         if (Math.abs(weightDiff) > 0.001) {
-            // Get material_id and unit from transaction
-            const { data: tx } = await (supabase
-                .from("transactions")
-                .select("material_id, materials(unit)")
-                .eq("id", oldDelivery.transaction_id)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .single() as any);
+            let materialId: string | null = null;
+            let matUnit = 'tonelada';
 
-            if (tx?.material_id) {
+            if (oldDelivery.transaction_id) {
+                // Linked delivery: get material from transaction
+                const { data: tx } = await (supabase
+                    .from("transactions")
+                    .select("material_id, materials(unit)")
+                    .eq("id", oldDelivery.transaction_id)
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    .single() as any);
+                materialId = tx?.material_id;
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const matUnit = (tx as any).materials?.unit || 'tonelada';
-                // Converter diff de kg para unidade do material
+                matUnit = (tx as any)?.materials?.unit || 'tonelada';
+            } else if (oldDelivery.material_id) {
+                // Unlinked delivery: get unit from material directly
+                materialId = oldDelivery.material_id;
+                const { data: matInfo } = await supabase.from("materials").select("unit").eq("id", materialId!).single();
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                matUnit = (matInfo as any)?.unit || 'tonelada';
+            }
+
+            if (materialId) {
                 const diffInUnit = matUnit === 'tonelada' ? weightDiff / 1000 : weightDiff;
-
-                const { data: mat } = await supabase.from("materials").select("current_stock").eq("id", tx.material_id).single();
+                const { data: mat } = await supabase.from("materials").select("current_stock").eq("id", materialId).single();
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const currentStock = Number((mat as any)?.current_stock) || 0;
-
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 await (supabase.from("materials") as any)
                     .update({ current_stock: currentStock + diffInUnit })
-                    .eq("id", tx.material_id);
+                    .eq("id", materialId);
             }
         }
 
@@ -598,7 +609,7 @@ export async function deleteDelivery(id: string): Promise<{ success: boolean; er
         // Get delivery info before deleting
         const { data: delivery, error: fetchError } = await (supabase
             .from("inbound_deliveries")
-            .select("weight_measured, transaction_id, plate")
+            .select("weight_measured, transaction_id, material_id, plate")
             .eq("id", id)
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .single() as any);
@@ -609,13 +620,19 @@ export async function deleteDelivery(id: string): Promise<{ success: boolean; er
 
         const weight = Number(delivery.weight_measured);
 
-        // Get material_id from transaction
-        const { data: tx } = await (supabase
-            .from("transactions")
-            .select("material_id")
-            .eq("id", delivery.transaction_id)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .single() as any);
+        // Resolve material_id (from transaction or directly from delivery)
+        let materialId: string | null = null;
+        if (delivery.transaction_id) {
+            const { data: tx } = await (supabase
+                .from("transactions")
+                .select("material_id")
+                .eq("id", delivery.transaction_id)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                .single() as any);
+            materialId = tx?.material_id;
+        } else {
+            materialId = delivery.material_id;
+        }
 
         // Soft Delete
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -632,34 +649,31 @@ export async function deleteDelivery(id: string): Promise<{ success: boolean; er
         }
 
         // Subtract weight from stock and Log Reversal
-        if (tx?.material_id) {
-            // Fetch material unit for conversion
-            const { data: matInfo } = await supabase.from("materials").select("unit, current_stock").eq("id", tx.material_id).single();
+        if (materialId) {
+            const { data: matInfo } = await supabase.from("materials").select("unit, current_stock").eq("id", materialId).single();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const matUnit = (matInfo as any)?.unit || 'tonelada';
-            // Converter peso de kg para unidade do material
             const quantityInUnit = matUnit === 'tonelada' ? weight / 1000 : weight;
 
-            // A. Log Movement Reversal (na unidade do material)
+            // A. Log Movement Reversal
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("inventory_movements") as any).insert({
-                material_id: tx.material_id,
-                quantity: -quantityInUnit, // Negative to reverse
+                material_id: materialId,
+                quantity: -quantityInUnit,
                 movement_type: "ajuste",
-                reference_id: delivery.transaction_id, // Link to order
+                reference_id: delivery.transaction_id || null,
                 date: new Date().toISOString(),
                 notes: `Estorno de Entrega: Placa ${delivery.plate} (${weight} kg)`
             });
 
-            // B. Update Stock (na unidade do material)
+            // B. Update Stock
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const currentStock = Number((matInfo as any)?.current_stock) || 0;
             const newStock = Math.max(0, currentStock - quantityInUnit);
-
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase.from("materials") as any)
                 .update({ current_stock: newStock })
-                .eq("id", tx.material_id);
+                .eq("id", materialId);
         }
 
         revalidatePath("/balanca");
