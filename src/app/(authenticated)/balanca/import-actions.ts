@@ -4,6 +4,38 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
 // =============================================================================
+// Last import info (shown on upload step to prevent duplicates)
+// =============================================================================
+
+export interface LastImportInfo {
+    lastDeliveryDate: string | null;
+    totalDeliveries: number;
+}
+
+export async function getLastImportInfo(): Promise<LastImportInfo> {
+    const supabase = await createClient();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase
+        .from("inbound_deliveries")
+        .select("date")
+        .is("deleted_at", null)
+        .order("date", { ascending: false })
+        .limit(1) as any);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count } = await (supabase
+        .from("inbound_deliveries")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null) as any);
+
+    return {
+        lastDeliveryDate: data?.[0]?.date || null,
+        totalDeliveries: count || 0,
+    };
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 

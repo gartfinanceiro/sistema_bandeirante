@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Upload, X, CheckCircle, AlertTriangle, XCircle, FileSpreadsheet, Loader2 } from "lucide-react";
-import type { ParsedTicket, MatchedTicket, ImportResult } from "@/app/(authenticated)/balanca/import-actions";
+import { useState, useCallback, useEffect } from "react";
+import { Upload, X, CheckCircle, AlertTriangle, XCircle, FileSpreadsheet, Loader2, Info } from "lucide-react";
+import type { ParsedTicket, MatchedTicket, ImportResult, LastImportInfo } from "@/app/(authenticated)/balanca/import-actions";
 
 // =============================================================================
 // File Parser (client-side) — HTML-disguised .xls
@@ -90,6 +90,15 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
     const [importResult, setImportResult] = useState<ImportResult | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [selectedTickets, setSelectedTickets] = useState<Set<number>>(new Set());
+    const [lastImport, setLastImport] = useState<LastImportInfo | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        import("@/app/(authenticated)/balanca/import-actions")
+            .then(({ getLastImportInfo }) => getLastImportInfo())
+            .then(setLastImport)
+            .catch(() => setLastImport(null));
+    }, [isOpen]);
 
     const reset = useCallback(() => {
         setStep("upload");
@@ -232,6 +241,18 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
                     {/* STEP: Upload */}
                     {step === "upload" && (
                         <div className="flex flex-col items-center justify-center py-12">
+                            {lastImport?.lastDeliveryDate && (
+                                <div className="w-full max-w-md mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2.5">
+                                    <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                                    <div className="text-sm text-blue-800">
+                                        <span className="font-medium">Ultima importacao:</span>{" "}
+                                        {new Date(lastImport.lastDeliveryDate + "T12:00:00Z").toLocaleDateString("pt-BR")}{" "}
+                                        <span className="text-blue-600">
+                                            ({lastImport.totalDeliveries} descargas no total)
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
                             <label className="w-full max-w-md border-2 border-dashed border-gray-300 rounded-xl p-8 flex flex-col items-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
                                 <Upload className="w-10 h-10 text-gray-400 mb-3" />
                                 <span className="text-sm font-medium text-gray-700">
