@@ -246,7 +246,7 @@ export function ImportBalancaDialog({ isOpen, onClose, onImportComplete }: Impor
                                     <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
                                     <div className="text-sm text-blue-800">
                                         <span className="font-medium">Ultima importacao:</span>{" "}
-                                        {new Date(lastImport.lastDeliveryDate + "T12:00:00Z").toLocaleDateString("pt-BR")}{" "}
+                                        {new Date(lastImport.lastDeliveryDate).toLocaleDateString("pt-BR")}{" "}
                                         <span className="text-blue-600">
                                             ({lastImport.totalDeliveries} descargas no total)
                                         </span>
