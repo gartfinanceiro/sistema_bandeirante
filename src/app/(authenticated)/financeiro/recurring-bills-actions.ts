@@ -38,6 +38,7 @@ export interface AvailableTransaction {
     description: string;
     categoryName: string | null;
     supplierName: string | null;
+    linkedToBillName: string | null;
 }
 
 // =============================================================================
@@ -416,19 +417,23 @@ export async function getAvailableTransactionsForLinking(
         ? `${year + 1}-01-01`
         : `${year}-${String(month + 1).padStart(2, "0")}-01`;
 
-    // Get all linked transaction IDs for this month
+    // Get all linked transaction IDs for this month (with bill name for warning)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: links } = await (supabase as any)
         .from("recurring_bill_payments")
-        .select("transaction_id")
+        .select("transaction_id, recurring_bills ( name )")
         .eq("reference_month", month)
         .eq("reference_year", year);
 
+    // Map: transaction_id → bill name (for already-linked warning)
+    const linkedMap = new Map<string, string>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const linkedIds = new Set((links || []).map((l: any) => l.transaction_id));
+    for (const l of (links || []) as any[]) {
+        linkedMap.set(l.transaction_id, l.recurring_bills?.name || "Outra conta");
+    }
 
-    // In replace-mode: remove this bill's own current transaction from the exclusion set
-    // so it appears as a selectable option in the dialog
+    // In replace-mode: remove this bill's own current transaction from the linked set
+    // so it appears as a normal selectable option in the dialog
     if (excludeBillId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: currentLink } = await (supabase as any)
@@ -438,7 +443,7 @@ export async function getAvailableTransactionsForLinking(
             .eq("reference_month", month)
             .eq("reference_year", year)
             .limit(1);
-        if (currentLink?.[0]) linkedIds.delete(currentLink[0].transaction_id);
+        if (currentLink?.[0]) linkedMap.delete(currentLink[0].transaction_id);
     }
 
     // Fetch transactions for the month
@@ -471,18 +476,24 @@ export async function getAvailableTransactionsForLinking(
         return [];
     }
 
-    // Filter out already-linked transactions
+    // Include all transactions; mark already-linked ones with the bill name
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (transactions as any[])
-        .filter((t) => !linkedIds.has(t.id))
-        .map((t) => ({
-            id: t.id,
-            date: t.date,
-            amount: Number(t.amount),
-            description: t.description || "",
-            categoryName: t.transaction_categories?.name || null,
-            supplierName: t.suppliers?.name || null,
-        }));
+    const available = (transactions as any[]).map((t) => ({
+        id: t.id,
+        date: t.date,
+        amount: Number(t.amount),
+        description: t.description || "",
+        categoryName: t.transaction_categories?.name || null,
+        supplierName: t.suppliers?.name || null,
+        linkedToBillName: linkedMap.get(t.id) || null,
+    }));
+
+    // Sort: unlinked first, then linked
+    return available.sort((a, b) => {
+        if (a.linkedToBillName && !b.linkedToBillName) return 1;
+        if (!a.linkedToBillName && b.linkedToBillName) return -1;
+        return 0;
+    });
 }
 
 // =============================================================================

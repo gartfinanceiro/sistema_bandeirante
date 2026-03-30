@@ -191,7 +191,9 @@ export function LinkTransactionDialog({
                                     className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                                         tx.id === currentTransactionId
                                             ? "border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/10"
-                                            : "border-border bg-card hover:bg-accent/50"
+                                            : tx.linkedToBillName
+                                                ? "border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/10 opacity-75"
+                                                : "border-border bg-card hover:bg-accent/50"
                                     }`}
                                 >
                                     <div className="flex-1 min-w-0">
@@ -202,6 +204,11 @@ export function LinkTransactionDialog({
                                             {tx.id === currentTransactionId && (
                                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 flex-shrink-0">
                                                     atual
+                                                </span>
+                                            )}
+                                            {tx.linkedToBillName && tx.id !== currentTransactionId && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 flex-shrink-0">
+                                                    vinculada
                                                 </span>
                                             )}
                                         </div>
@@ -220,6 +227,11 @@ export function LinkTransactionDialog({
                                                 </>
                                             )}
                                         </div>
+                                        {tx.linkedToBillName && tx.id !== currentTransactionId && (
+                                            <p className="text-[10px] text-orange-600 dark:text-orange-400 mt-1">
+                                                Ja vinculada a: {tx.linkedToBillName}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="text-sm font-medium text-foreground flex-shrink-0">
                                         {formatCurrency(tx.amount)}
