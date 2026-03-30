@@ -47,7 +47,7 @@ export interface SupplierBalance {
 export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
     const supabase = await createClient();
 
-    // 1. Get Transactions (Matéria Prima / Saída)
+    // 1. Get Transactions (Matéria Prima / Saída — excluindo carvão, que tem fluxo próprio)
     const { data: transactions, error } = await supabase
         .from("transactions")
         .select(`
@@ -59,6 +59,7 @@ export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
         .not("material_id", "is", null)
         .not("quantity", "is", null)
         .gt("quantity", 0)
+        .neq("category_id", "raw_material_charcoal")
         .order("date", { ascending: false });
 
     if (error) {

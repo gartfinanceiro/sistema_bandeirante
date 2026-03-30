@@ -484,7 +484,7 @@ export function ImportFinanceiroDialog({
             setError(err instanceof Error ? err.message : "Erro ao importar");
             setStep("review");
         }
-    }, [matchedTransactions, selectedIds, categoryOverrides]);
+    }, [matchedTransactions, selectedIds, categoryOverrides, purchaseOverrides, descriptionOverrides]);
 
     // Helpers
     const toggleSelect = (idx: number) => {
