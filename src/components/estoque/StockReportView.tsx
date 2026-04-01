@@ -12,7 +12,6 @@ export function StockReportView() {
     const [isLoading, setIsLoading] = useState(true);
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
-    // Generate month options (last 12 months)
     const monthOptions: { value: string; label: string }[] = [];
     for (let i = 0; i < 12; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -23,7 +22,6 @@ export function StockReportView() {
 
     useEffect(() => {
         let isMounted = true;
-
         async function fetchReport() {
             setIsLoading(true);
             try {
@@ -35,7 +33,6 @@ export function StockReportView() {
                 if (isMounted) setIsLoading(false);
             }
         }
-
         fetchReport();
         return () => { isMounted = false; };
     }, [month, year]);
@@ -44,21 +41,15 @@ export function StockReportView() {
         if (!reportData) return;
         try {
             setIsGeneratingPdf(true);
-
             const htmlContent = generateStockReportHtml(reportData);
-
             const printWindow = window.open("", "_blank");
             if (!printWindow) {
                 alert("Permita pop-ups para gerar o PDF.");
                 return;
             }
-
             printWindow.document.write(htmlContent);
             printWindow.document.close();
-
-            printWindow.onload = () => {
-                setTimeout(() => { printWindow.print(); }, 300);
-            };
+            printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 300); };
             setTimeout(() => { printWindow.print(); }, 1000);
         } catch (error) {
             console.error(error);
@@ -87,7 +78,6 @@ export function StockReportView() {
     }
 
     const { positions, movementSummary } = reportData;
-    const alerts = positions.filter((p) => p.isLow || p.currentStock === 0);
 
     const formatNumber = (value: number) =>
         new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
@@ -95,14 +85,13 @@ export function StockReportView() {
     const formatCurrency = (value: number) =>
         new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 
-    // Find minério position for supplier breakdown section
     const minerioPosition = positions.find(
         (p) => p.supplierBreakdown && p.supplierBreakdown.length > 0
     );
 
     return (
         <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Header / Actions */}
+            {/* Header */}
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
                     <div>
@@ -144,26 +133,7 @@ export function StockReportView() {
                 </button>
             </div>
 
-            {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-card border border-border rounded-lg p-5">
-                    <p className="text-xs font-medium text-muted-foreground uppercase">Materiais Ativos</p>
-                    <p className="text-2xl font-bold text-primary mt-1">{positions.length}</p>
-                </div>
-                <div className={`bg-card border rounded-lg p-5 ${alerts.length > 0 ? "border-amber-500/50 bg-amber-500/5" : "border-border"}`}>
-                    <p className="text-xs font-medium text-muted-foreground uppercase">Alertas de Estoque</p>
-                    <p className={`text-2xl font-bold mt-1 ${alerts.length > 0 ? "text-amber-500" : "text-primary"}`}>{alerts.length}</p>
-                    {alerts.length > 0 && (
-                        <p className="text-xs text-amber-600 mt-1">{alerts.map((a) => a.name).join(", ")}</p>
-                    )}
-                </div>
-                <div className="bg-card border border-border rounded-lg p-5">
-                    <p className="text-xs font-medium text-muted-foreground uppercase">Movimentações no Período</p>
-                    <p className="text-2xl font-bold text-primary mt-1">{movementSummary.reduce((sum, m) => sum + m.movementCount, 0)}</p>
-                </div>
-            </div>
-
-            {/* Posição de Estoque com Fornecedor */}
+            {/* Posição de Estoque */}
             <div>
                 <h3 className="text-base font-semibold text-foreground mb-3 flex items-center gap-2">
                     <div className="p-1.5 bg-blue-100 rounded-md">
@@ -171,7 +141,7 @@ export function StockReportView() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                         </svg>
                     </div>
-                    Posição Atual
+                    Posição de Estoque
                 </h3>
                 <div className="bg-card border border-border rounded-lg overflow-hidden">
                     <table className="w-full">
@@ -180,8 +150,6 @@ export function StockReportView() {
                                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Material</th>
                                 <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">Unidade</th>
                                 <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Estoque Atual</th>
-                                <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Nível Mínimo</th>
-                                <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">Status</th>
                                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Fornecedor</th>
                             </tr>
                         </thead>
@@ -191,21 +159,11 @@ export function StockReportView() {
                                     <td className="px-4 py-3 text-sm font-medium text-foreground">{p.name}</td>
                                     <td className="px-4 py-3 text-sm text-muted-foreground text-center">{p.unit}</td>
                                     <td className="px-4 py-3 text-sm text-right font-semibold text-foreground">{formatNumber(p.currentStock)}</td>
-                                    <td className="px-4 py-3 text-sm text-right text-muted-foreground">{p.minStockAlert !== null ? formatNumber(p.minStockAlert) : "—"}</td>
-                                    <td className="px-4 py-3 text-center">
-                                        {p.currentStock === 0 ? (
-                                            <span className="px-2 py-1 rounded text-xs font-medium bg-red-500/20 text-red-500">Sem Estoque</span>
-                                        ) : p.isLow ? (
-                                            <span className="px-2 py-1 rounded text-xs font-medium bg-amber-500/20 text-amber-500">Baixo</span>
-                                        ) : (
-                                            <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-500">Adequado</span>
-                                        )}
-                                    </td>
                                     <td className="px-4 py-3 text-sm text-muted-foreground">
                                         {p.supplierName ? (
                                             <span className="text-foreground">{p.supplierName}</span>
                                         ) : p.supplierBreakdown && p.supplierBreakdown.length > 0 ? (
-                                            <span className="text-blue-500 font-medium text-xs">Detalhado abaixo</span>
+                                            <span className="text-blue-500 font-medium text-xs">Ver detalhamento abaixo</span>
                                         ) : (
                                             <span className="italic">—</span>
                                         )}
@@ -217,7 +175,7 @@ export function StockReportView() {
                 </div>
             </div>
 
-            {/* Detalhamento Minério por Fornecedor */}
+            {/* Minério por Fornecedor */}
             {minerioPosition && minerioPosition.supplierBreakdown && minerioPosition.supplierBreakdown.length > 0 && (
                 <div>
                     <h3 className="text-base font-semibold text-foreground mb-3 flex items-center gap-2">
@@ -229,15 +187,15 @@ export function StockReportView() {
                         {minerioPosition.name} — Por Fornecedor
                     </h3>
                     <p className="text-xs text-muted-foreground mb-3">
-                        Quantidade total entregue por cada fornecedor (acumulado histórico de entregas na balança).
+                        Quantidade total entregue por fornecedor (acumulado histórico, peso real na balança).
                     </p>
                     <div className="bg-card border border-border rounded-lg overflow-hidden">
                         <table className="w-full">
                             <thead>
                                 <tr className="border-b border-border bg-muted/50">
                                     <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Fornecedor</th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Quantidade Entregue ({minerioPosition.unit})</th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">% do Total</th>
+                                    <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Qtd. Entregue ({minerioPosition.unit})</th>
+                                    <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">%</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -262,53 +220,46 @@ export function StockReportView() {
                             </tbody>
                         </table>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2 italic">
-                        Nota: As quantidades refletem o total entregue na balança (peso real). O estoque atual pode diferir devido a consumo na produção.
-                    </p>
                 </div>
             )}
 
             {/* Resumo de Movimentações */}
-            <div>
-                <h3 className="text-base font-semibold text-foreground mb-3 flex items-center gap-2">
-                    <div className="p-1.5 bg-green-100 rounded-md">
-                        <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                        </svg>
-                    </div>
-                    Movimentações — {reportData.period.label}
-                </h3>
-                {movementSummary.length === 0 ? (
-                    <div className="bg-card border border-border rounded-lg p-8 text-center">
-                        <p className="text-muted-foreground">Nenhuma movimentação no período</p>
-                    </div>
-                ) : (
+            {movementSummary.length > 0 && (
+                <div>
+                    <h3 className="text-base font-semibold text-foreground mb-3 flex items-center gap-2">
+                        <div className="p-1.5 bg-green-100 rounded-md">
+                            <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                            </svg>
+                        </div>
+                        Movimentações — {reportData.period.label}
+                    </h3>
                     <div className="bg-card border border-border rounded-lg overflow-hidden">
                         <table className="w-full">
                             <thead>
                                 <tr className="border-b border-border bg-muted/50">
                                     <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Material</th>
+                                    <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">Unidade</th>
                                     <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Entradas</th>
                                     <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Saídas</th>
                                     <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Valor Entradas</th>
-                                    <th className="text-center text-xs font-medium text-muted-foreground px-4 py-3">Nº Mov.</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {movementSummary.map((m) => (
                                     <tr key={m.materialId} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                                         <td className="px-4 py-3 text-sm font-medium text-foreground">{m.materialName}</td>
+                                        <td className="px-4 py-3 text-sm text-muted-foreground text-center">{m.unit}</td>
                                         <td className="px-4 py-3 text-sm text-right font-medium text-green-500">{formatNumber(m.totalEntradas)} {m.unit}</td>
                                         <td className="px-4 py-3 text-sm text-right font-medium text-red-500">{formatNumber(m.totalSaidas)} {m.unit}</td>
                                         <td className="px-4 py-3 text-sm text-right text-foreground">{m.valorEntradas > 0 ? formatCurrency(m.valorEntradas) : "—"}</td>
-                                        <td className="px-4 py-3 text-sm text-center text-muted-foreground">{m.movementCount}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     </div>
-                )}
-            </div>
+                </div>
+            )}
         </div>
     );
 }

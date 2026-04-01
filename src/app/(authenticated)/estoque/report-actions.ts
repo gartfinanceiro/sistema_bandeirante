@@ -16,8 +16,6 @@ export interface StockPosition {
     name: string;
     unit: string;
     currentStock: number;
-    minStockAlert: number | null;
-    isLow: boolean;
     /** Primary supplier name (for non-minério materials) */
     supplierName: string | null;
     /** Per-supplier breakdown (only for Minério de Ferro) */
@@ -72,7 +70,7 @@ export async function getStockReportData(
     const [materialsRes, movementsRes, suppliersRes, deliveriesRes] = await Promise.all([
         supabase
             .from("materials")
-            .select("id, name, unit, current_stock, min_stock_alert, is_active")
+            .select("id, name, unit, current_stock, is_active")
             .eq("is_active", true)
             .order("name"),
         supabase
@@ -95,7 +93,7 @@ export async function getStockReportData(
 
     const materials = (materialsRes.data || []) as {
         id: string; name: string; unit: string;
-        current_stock: number; min_stock_alert: number | null; is_active: boolean;
+        current_stock: number; is_active: boolean;
     }[];
 
     const movements = (movementsRes.data || []) as {
@@ -164,8 +162,6 @@ export async function getStockReportData(
             name: m.name,
             unit: m.unit,
             currentStock: Number(m.current_stock) || 0,
-            minStockAlert: m.min_stock_alert ? Number(m.min_stock_alert) : null,
-            isLow: m.min_stock_alert !== null && Number(m.current_stock) < Number(m.min_stock_alert),
             supplierName: isMinerio ? null : (isCarvao ? null : (supplierByMaterial[m.id] || null)),
             supplierBreakdown: isMinerio && minerioBreakdown.length > 0 ? minerioBreakdown : null,
         };
