@@ -12,6 +12,7 @@ import {
     type Supplier,
 } from "./actions";
 import { getVisualTypeFromName } from "./utils";
+import { StockReportView } from "@/components/estoque/StockReportView";
 
 // Icons map based on visual keys
 const MATERIAL_ICONS_BY_TYPE: Record<string, React.ReactNode> = {
@@ -37,7 +38,7 @@ const MATERIAL_ICONS_BY_TYPE: Record<string, React.ReactNode> = {
     ),
 };
 
-type ViewMode = "stocks" | "materials";
+type ViewMode = "stocks" | "materials" | "report";
 
 export default function EstoquePage() {
     const [view, setView] = useState<ViewMode>("stocks");
@@ -152,13 +153,24 @@ export default function EstoquePage() {
                         >
                             Tipos de Material
                         </button>
+                        <button
+                            onClick={() => setView("report")}
+                            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${view === "report"
+                                ? "bg-background text-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                                }`}
+                        >
+                            Relatório
+                        </button>
                     </div>
                 </div>
             </div>
 
             {/* Content */}
             <div className="animate-in fade-in duration-300">
-                {view === "materials" ? (
+                {view === "report" ? (
+                    <StockReportView />
+                ) : view === "materials" ? (
                     <MaterialsList materials={materials} onRefresh={loadData} />
                 ) : (
                     <>
