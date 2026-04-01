@@ -6,6 +6,11 @@ import { createClient } from "@/lib/supabase/server";
 // Types
 // =============================================================================
 
+export interface SupplierBreakdown {
+    supplierName: string;
+    quantity: number; // in material unit (tonelada)
+}
+
 export interface StockPosition {
     id: string;
     name: string;
@@ -13,6 +18,10 @@ export interface StockPosition {
     currentStock: number;
     minStockAlert: number | null;
     isLow: boolean;
+    /** Primary supplier name (for non-minério materials) */
+    supplierName: string | null;
+    /** Per-supplier breakdown (only for Minério de Ferro) */
+    supplierBreakdown: SupplierBreakdown[] | null;
 }
 
 export interface MovementSummary {
@@ -25,33 +34,22 @@ export interface MovementSummary {
     movementCount: number;
 }
 
-export interface MovementDetail {
-    id: string;
-    date: string;
-    quantity: number;
-    unitPrice: number | null;
-    totalValue: number | null;
-    movementType: string;
-    notes: string | null;
-    materialName: string;
-}
-
-export interface SupplierInfo {
-    id: string;
-    name: string;
-    materialName: string;
-    defaultPrice: number | null;
-    hasIcms: boolean;
-    icmsRate: number;
-    isActive: boolean;
-}
-
 export interface StockReportData {
     positions: StockPosition[];
     movementSummary: MovementSummary[];
-    movements: MovementDetail[];
-    suppliers: SupplierInfo[];
     period: { startDate: string; endDate: string; label: string };
+}
+
+// =============================================================================
+// Supplier names to merge (same source)
+// =============================================================================
+
+const SUPPLIER_MERGE_MAP: Record<string, string> = {
+    "Mineração Corumbaense Reunida com Frete": "Mineração Corumbaense Reunida",
+};
+
+function normalizeSupplierName(name: string): string {
+    return SUPPLIER_MERGE_MAP[name] || name;
 }
 
 // =============================================================================
@@ -71,7 +69,7 @@ export async function getStockReportData(
     const capitalizedMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1);
 
     // Fetch all data in parallel
-    const [materialsRes, movementsRes, suppliersRes] = await Promise.all([
+    const [materialsRes, movementsRes, suppliersRes, deliveriesRes] = await Promise.all([
         supabase
             .from("materials")
             .select("id, name, unit, current_stock, min_stock_alert, is_active")
@@ -85,8 +83,14 @@ export async function getStockReportData(
             .order("date", { ascending: false }),
         supabase
             .from("suppliers")
-            .select("id, name, material_id, default_price, has_icms, icms_rate, is_active, materials(name)")
+            .select("id, name, material_id, is_active")
+            .eq("is_active", true)
             .order("name"),
+        // Get inbound deliveries with supplier info for minério breakdown
+        supabase
+            .from("inbound_deliveries")
+            .select("material_id, supplier_id, weight_measured, suppliers!supplier_id(name)")
+            .is("deleted_at", null),
     ]);
 
     const materials = (materialsRes.data || []) as {
@@ -102,20 +106,70 @@ export async function getStockReportData(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const suppliers = (suppliersRes.data || []) as any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const deliveries = (deliveriesRes.data || []) as any[];
 
     // Build material lookup
     const matMap: Record<string, { name: string; unit: string }> = {};
     materials.forEach((m) => { matMap[m.id] = { name: m.name, unit: m.unit }; });
 
+    // Build supplier lookup: material_id -> supplier name (for non-minério)
+    const supplierByMaterial: Record<string, string> = {};
+    for (const s of suppliers) {
+        if (s.material_id && s.is_active) {
+            // If multiple suppliers for same material, just pick the first one
+            if (!supplierByMaterial[s.material_id]) {
+                supplierByMaterial[s.material_id] = s.name;
+            }
+        }
+    }
+
+    // Build per-supplier breakdown for minério de ferro from inbound_deliveries
+    // weight_measured is in KG, we need to convert to tonelada
+    const minerioBreakdownMap: Record<string, number> = {};
+    let minerioMaterialId: string | null = null;
+
+    for (const mat of materials) {
+        const lower = mat.name.toLowerCase();
+        if (lower.includes("minério") || lower.includes("minerio")) {
+            minerioMaterialId = mat.id;
+            break;
+        }
+    }
+
+    if (minerioMaterialId) {
+        for (const d of deliveries) {
+            if (d.material_id === minerioMaterialId && d.supplier_id) {
+                const rawName = d.suppliers?.name || "Desconhecido";
+                const name = normalizeSupplierName(rawName);
+                const weightKg = Number(d.weight_measured) || 0;
+                const weightTon = weightKg / 1000;
+                minerioBreakdownMap[name] = (minerioBreakdownMap[name] || 0) + weightTon;
+            }
+        }
+    }
+
+    const minerioBreakdown: SupplierBreakdown[] = Object.entries(minerioBreakdownMap)
+        .map(([supplierName, quantity]) => ({ supplierName, quantity }))
+        .sort((a, b) => b.quantity - a.quantity);
+
     // 1. Stock Positions
-    const positions: StockPosition[] = materials.map((m) => ({
-        id: m.id,
-        name: m.name,
-        unit: m.unit,
-        currentStock: Number(m.current_stock) || 0,
-        minStockAlert: m.min_stock_alert ? Number(m.min_stock_alert) : null,
-        isLow: m.min_stock_alert !== null && Number(m.current_stock) < Number(m.min_stock_alert),
-    }));
+    const positions: StockPosition[] = materials.map((m) => {
+        const isMinerio = m.id === minerioMaterialId;
+        const lower = m.name.toLowerCase();
+        const isCarvao = lower.includes("carvão") || lower.includes("carvao");
+
+        return {
+            id: m.id,
+            name: m.name,
+            unit: m.unit,
+            currentStock: Number(m.current_stock) || 0,
+            minStockAlert: m.min_stock_alert ? Number(m.min_stock_alert) : null,
+            isLow: m.min_stock_alert !== null && Number(m.current_stock) < Number(m.min_stock_alert),
+            supplierName: isMinerio ? null : (isCarvao ? null : (supplierByMaterial[m.id] || null)),
+            supplierBreakdown: isMinerio && minerioBreakdown.length > 0 ? minerioBreakdown : null,
+        };
+    });
 
     // 2. Movement Summary by Material
     const summaryMap: Record<string, MovementSummary> = {};
@@ -145,34 +199,9 @@ export async function getStockReportData(
     }
     const movementSummary = Object.values(summaryMap).sort((a, b) => b.totalEntradas - a.totalEntradas);
 
-    // 3. Movement Details
-    const movementDetails: MovementDetail[] = movements.map((mov) => ({
-        id: mov.id,
-        date: mov.date,
-        quantity: Number(mov.quantity) || 0,
-        unitPrice: mov.unit_price !== null ? Number(mov.unit_price) : null,
-        totalValue: mov.total_value !== null ? Number(mov.total_value) : null,
-        movementType: mov.movement_type,
-        notes: mov.notes,
-        materialName: matMap[mov.material_id]?.name || "Desconhecido",
-    }));
-
-    // 4. Suppliers
-    const supplierList: SupplierInfo[] = suppliers.map((s) => ({
-        id: s.id,
-        name: s.name,
-        materialName: s.materials?.name || "Desconhecido",
-        defaultPrice: s.default_price !== null ? Number(s.default_price) : null,
-        hasIcms: s.has_icms,
-        icmsRate: Number(s.icms_rate) || 0,
-        isActive: s.is_active,
-    }));
-
     return {
         positions,
         movementSummary,
-        movements: movementDetails,
-        suppliers: supplierList,
         period: {
             startDate,
             endDate,
