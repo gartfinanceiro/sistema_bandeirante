@@ -61,6 +61,10 @@ export function generateFinancialReportHtml({
     <head>
         <meta charset="UTF-8">
         <style>
+            @media print {
+                body { padding: 20px; }
+                @page { size: A4; margin: 15mm; }
+            }
             body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #1f2937; max-width: 210mm; margin: 0 auto; }
             .header { border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
             .title { font-size: 24px; font-weight: bold; color: #111827; margin: 0; }

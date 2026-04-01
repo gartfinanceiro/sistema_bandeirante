@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { getExpensesReport, getEntriesReport, type FinancialReport } from '@/app/(authenticated)/financeiro/actions';
+import { getExpensesReport, getEntriesReport, getMonthSummary, type FinancialReport } from '@/app/(authenticated)/financeiro/actions';
 import { ExpenseDonutChart } from './ExpenseDonutChart';
 import { CategoryExpenseList } from './CategoryExpenseList';
+import { generateFinancialReportHtml } from './pdf/generateFinancialReportHtml';
 
 interface FinancialAnalysisViewProps {
     month: number;
@@ -72,21 +73,41 @@ export function FinancialAnalysisView({ month, year }: FinancialAnalysisViewProp
     const handleGeneratePDF = async () => {
         try {
             setIsLoading(true);
-            const response = await fetch(`/api/financeiro/report-pdf?month=${month}&year=${year}`);
 
-            if (!response.ok) {
-                throw new Error("Falha ao gerar o relatório");
+            // Fetch summary for the PDF (entradas/saidas already loaded)
+            const summary = await getMonthSummary(month, year);
+
+            // Generate HTML using the existing template
+            const htmlContent = generateFinancialReportHtml({
+                month,
+                year,
+                summary,
+                expensesReport: expensesReport!,
+                entriesReport: entriesReport!,
+                generatedAt: new Date().toLocaleString("pt-BR"),
+            });
+
+            // Open a new window and print as PDF (client-side, no Puppeteer needed)
+            const printWindow = window.open("", "_blank");
+            if (!printWindow) {
+                alert("Permita pop-ups para gerar o PDF.");
+                return;
             }
 
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `Relatorio_Financeiro_${month}_${year}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
+            printWindow.document.write(htmlContent);
+            printWindow.document.close();
+
+            // Wait for content to render, then trigger print dialog
+            printWindow.onload = () => {
+                setTimeout(() => {
+                    printWindow.print();
+                }, 300);
+            };
+
+            // Fallback: if onload doesn't fire (some browsers)
+            setTimeout(() => {
+                printWindow.print();
+            }, 1000);
         } catch (error) {
             console.error(error);
             alert("Erro ao gerar o PDF. Tente novamente.");
