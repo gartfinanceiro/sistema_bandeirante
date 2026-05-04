@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllPages } from "@/lib/supabase/paginate";
 import { revalidatePath } from "next/cache";
 
 // =============================================================================
@@ -143,15 +144,22 @@ export async function getMonthlyBillsStatus(
         ? `${year + 1}-01-01`
         : `${year}-${String(month + 1).padStart(2, "0")}-01`;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: monthTransactions } = await (supabase as any)
-        .from("transactions")
-        .select("id, date, amount, description, status, category_id, supplier_id")
-        .eq("type", "saida")
-        .eq("status", "pago")
-        .gte("date", dateStart)
-        .lt("date", dateEnd)
-        .order("date", { ascending: false });
+    // Paginated to bypass PostgREST's default 1000-row truncation as the
+    // monthly volume of saídas grows.
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const monthTransactions = await fetchAllPages<any>(
+        (from, to) =>
+            (supabase as any)
+                .from("transactions")
+                .select("id, date, amount, description, status, category_id, supplier_id")
+                .eq("type", "saida")
+                .eq("status", "pago")
+                .gte("date", dateStart)
+                .lt("date", dateEnd)
+                .order("date", { ascending: false })
+                .range(from, to),
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     // Build lookup: transaction ID → transaction data
     const txMap = new Map<string, {

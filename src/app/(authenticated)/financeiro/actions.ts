@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllPages } from "@/lib/supabase/paginate";
 import type { TransactionType, PaymentStatus } from "@/types/database";
 
 // =============================================================================
@@ -203,37 +204,55 @@ export async function getMonthSummary(
 
     // 1. Fetch Month Data (Entradas/Saídas do Mês)
     // Strict range: startDate to endDate
-    const { data: monthData, error: monthError } = await supabase
-        .from("transactions")
-        .select("amount, type")
-        .gte("date", startDate)
-        .lte("date", endDate);
-
-    if (monthError || !monthData) {
+    // NOTE: paginated to bypass PostgREST's default 1000-row cap. A single
+    // month is unlikely to exceed it today, but we paginate defensively so
+    // the displayed totals never silently drift.
+    let monthData: { amount: number; type: string }[];
+    try {
+        monthData = await fetchAllPages<{ amount: number; type: string }>(
+            (from, to) =>
+                supabase
+                    .from("transactions")
+                    .select("amount, type")
+                    .gte("date", startDate)
+                    .lte("date", endDate)
+                    .range(from, to),
+        );
+    } catch (monthError) {
         console.error("Error fetching month summary:", monthError);
         return { totalEntries: 0, totalExits: 0, balance: 0 };
     }
 
-    const totalEntries = (monthData as { amount: number; type: string }[])
+    const totalEntries = monthData
         .filter((t) => t.type === "entrada")
         .reduce((sum, t) => sum + Number(t.amount), 0);
 
-    const totalExits = (monthData as { amount: number; type: string }[])
+    const totalExits = monthData
         .filter((t) => t.type === "saida")
         .reduce((sum, t) => sum + Number(t.amount), 0);
 
     // 2. Fetch Historical Data (Accumulated Balance)
-    // Range: All time up to endDate
-    // Note: We fetch everything to sum it up. For large datasets, this should be a DB aggregation or View.
-    // Optimization: We could fetch 'previous balance' up to startDate, but easiest reliable way without 'closings' table is sum all.
-    const { data: historyData, error: historyError } = await supabase
-        .from("transactions")
-        .select("amount, type")
-        .lte("date", endDate); // All transactions up to end of selected month
-
-    if (historyError || !historyData) {
+    // Range: All time up to endDate.
+    //
+    // CRITICAL: this query MUST be paginated. PostgREST silently caps
+    // un-ranged selects at 1000 rows, and once `transactions` crossed that
+    // threshold the displayed Saldo Acumulado started drifting by exactly
+    // the net of the dropped tail (a real incident: ~+R$ 151k in Apr/2026).
+    // For very large datasets a DB-side aggregation (RPC or view) would be
+    // more efficient, but this guarantees correctness.
+    let historyData: { amount: number; type: string }[];
+    try {
+        historyData = await fetchAllPages<{ amount: number; type: string }>(
+            (from, to) =>
+                supabase
+                    .from("transactions")
+                    .select("amount, type")
+                    .lte("date", endDate)
+                    .range(from, to),
+        );
+    } catch (historyError) {
         console.error("Error fetching history summary:", historyError);
-        // Fallback to month balance only if history fails, or 0
+        // Fallback to month balance only if history fails
         return {
             totalEntries,
             totalExits,
@@ -241,11 +260,11 @@ export async function getMonthSummary(
         };
     }
 
-    const historyEntries = (historyData as { amount: number; type: string }[])
+    const historyEntries = historyData
         .filter((t) => t.type === "entrada")
         .reduce((sum, t) => sum + Number(t.amount), 0);
 
-    const historyExits = (historyData as { amount: number; type: string }[])
+    const historyExits = historyData
         .filter((t) => t.type === "saida")
         .reduce((sum, t) => sum + Number(t.amount), 0);
 
@@ -271,28 +290,35 @@ export async function getExpensesReport(
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const endDate = new Date(year, month, 0).toISOString().split("T")[0];
 
-    // Get all expense transactions for the period
-    const { data: transactions, error } = await supabase
-        .from("transactions")
-        .select(`
-            id,
-            date,
-            amount,
-            description,
-            category:transaction_categories (
-                id,
-                name,
-                slug,
-                costCenter:cost_centers (
-                    name
-                )
-            )
-        `)
-        .eq("type", "saida")
-        .gte("date", startDate)
-        .lte("date", endDate);
-
-    if (error || !transactions) {
+    // Get all expense transactions for the period — paginated (PostgREST
+    // truncates un-ranged selects at 1000 rows; one month can exceed that).
+    let transactions: unknown[];
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        transactions = await fetchAllPages<any>(
+            (from, to) =>
+                supabase
+                    .from("transactions")
+                    .select(`
+                        id,
+                        date,
+                        amount,
+                        description,
+                        category:transaction_categories (
+                            id,
+                            name,
+                            slug,
+                            costCenter:cost_centers (
+                                name
+                            )
+                        )
+                    `)
+                    .eq("type", "saida")
+                    .gte("date", startDate)
+                    .lte("date", endDate)
+                    .range(from, to),
+        );
+    } catch (error) {
         console.error("Error fetching expenses report:", error);
         return { categories: [], macroCategories: [], totalValue: 0 };
     }
@@ -389,28 +415,35 @@ export async function getEntriesReport(
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const endDate = new Date(year, month, 0).toISOString().split("T")[0];
 
-    // Get all ENTRADA transactions for the period
-    const { data: transactions, error } = await supabase
-        .from("transactions")
-        .select(`
-            id,
-            date,
-            amount,
-            description,
-            category:transaction_categories (
-                id,
-                name,
-                slug,
-                costCenter:cost_centers (
-                    name
-                )
-            )
-        `)
-        .eq("type", "entrada")
-        .gte("date", startDate)
-        .lte("date", endDate);
-
-    if (error || !transactions) {
+    // Get all ENTRADA transactions for the period — paginated (PostgREST
+    // truncates un-ranged selects at 1000 rows).
+    let transactions: unknown[];
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        transactions = await fetchAllPages<any>(
+            (from, to) =>
+                supabase
+                    .from("transactions")
+                    .select(`
+                        id,
+                        date,
+                        amount,
+                        description,
+                        category:transaction_categories (
+                            id,
+                            name,
+                            slug,
+                            costCenter:cost_centers (
+                                name
+                            )
+                        )
+                    `)
+                    .eq("type", "entrada")
+                    .gte("date", startDate)
+                    .lte("date", endDate)
+                    .range(from, to),
+        );
+    } catch (error) {
         console.error("Error fetching entries report:", error);
         return { categories: [], macroCategories: [], totalValue: 0 };
     }

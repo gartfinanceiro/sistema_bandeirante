@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllPages } from "@/lib/supabase/paginate";
 
 export async function getDashboardKPIs() {
     const supabase = await createClient();
@@ -6,13 +7,17 @@ export async function getDashboardKPIs() {
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0];
 
     // 1. Saldo do Dia (Entradas - Saídas)
-    const { data: transactions } = await supabase
-        .from("transactions")
-        .select("type, amount")
-        .eq("date", today);
+    // A single day is unlikely to exceed 1000 rows but paginate defensively.
+    const transactions = await fetchAllPages<{ type: string; amount: number }>(
+        (from, to) =>
+            supabase
+                .from("transactions")
+                .select("type, amount")
+                .eq("date", today)
+                .range(from, to),
+    );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dailyBalance = ((transactions as any[]) || []).reduce((acc, curr) => {
+    const dailyBalance = transactions.reduce((acc, curr) => {
         return curr.type === "entrada"
             ? acc + Number(curr.amount)
             : acc - Number(curr.amount);
@@ -38,15 +43,19 @@ export async function getDashboardKPIs() {
     const charcoalStock = (charcoal as any)?.current_stock || 0;
 
     // 4. CPT (Despesas do Mês / Produção do Mês)
-    // Despesas
-    const { data: monthExpenses } = await supabase
-        .from("transactions")
-        .select("amount")
-        .eq("type", "saida")
-        .gte("date", startOfMonth);
+    // Despesas — paginated to avoid PostgREST's 1000-row truncation as the
+    // monthly volume of saídas grows.
+    const monthExpenses = await fetchAllPages<{ amount: number }>(
+        (from, to) =>
+            supabase
+                .from("transactions")
+                .select("amount")
+                .eq("type", "saida")
+                .gte("date", startOfMonth)
+                .range(from, to),
+    );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const totalExpenses = ((monthExpenses as any[]) || []).reduce((acc, curr) => acc + Number(curr.amount), 0);
+    const totalExpenses = monthExpenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
 
     // Produção Mensal
     const { data: monthProduction } = await supabase
