@@ -52,7 +52,10 @@ function mapStatus(raw: string): string {
     return "pago";
 }
 
-/** Importa um mês específico (puramente financeiro, idempotente). */
+const dedupKey = (date: string, type: string, amount: number, description: string | null) =>
+    `${date}|${type}|${Number(amount)}|${(description || "").toLowerCase().trim()}`;
+
+/** Importa um mês específico (puramente financeiro, idempotente) — em LOTE. */
 async function importMonth(
     supabase: any,
     categories: any[],
@@ -82,61 +85,81 @@ async function importMonth(
 
     const matched = categorizeTransactions(parsed, categories, bestRows);
 
+    // 1) Existentes do mês numa única query -> Set de chaves (dedup idempotente)
+    const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const { data: existingRows } = await supabase
+        .from("transactions")
+        .select("date, type, amount, description")
+        .gte("date", monthStart)
+        .lte("date", monthEnd);
+    const existing = new Set<string>(
+        (existingRows || []).map((r: any) => dedupKey(r.date, r.type, r.amount, r.description))
+    );
+
+    // 2) Montar novos (dedup vs banco e dentro do próprio lote) + agregar votos
+    const seen = new Set<string>();
+    const rowsToInsert: any[] = [];
+    const voteAgg = new Map<string, { merchant_key: string; category_slug: string; inc: number }>();
     for (const tx of matched) {
-        try {
-            const isHigh = tx.matchConfidence === "high";
-            const needsReview = !isHigh;
-            let categoryId = tx.suggestedCategoryId || "a_classificar";
-            if (categoryId.startsWith("material_")) categoryId = "raw_material_general";
+        const isHigh = tx.matchConfidence === "high";
+        let categoryId = tx.suggestedCategoryId || "a_classificar";
+        if (categoryId.startsWith("material_")) categoryId = "raw_material_general";
 
-            const { data: existing } = await supabase
-                .from("transactions")
-                .select("id")
-                .eq("date", tx.date)
-                .eq("type", tx.type)
-                .eq("amount", tx.amount)
-                .ilike("description", tx.description)
-                .limit(1);
-            if (existing && existing.length > 0) {
-                summary.skipped++;
-                continue;
-            }
-
-            const { error } = await (supabase.from("transactions") as any).insert({
-                date: tx.date,
-                amount: tx.amount,
-                type: tx.type,
-                description: tx.description,
-                category_id: categoryId,
-                status: mapStatus(tx.status),
-                needs_review: needsReview,
-                notes: "Importação automática (planilha)",
-            });
-            if (error) {
-                errors.push(`"${tx.description}" (${tx.date}): ${error.message}`);
-                summary.skipped++;
-                continue;
-            }
-
-            summary.imported++;
-            if (needsReview) summary.needsReview++;
-
-            if (isHigh && tx.suggestedCategoryId) {
-                const mk = merchantKey(tx.description);
-                if (mk) {
-                    try {
-                        await (supabase.rpc as any)("increment_merchant_vote", {
-                            p_merchant_key: mk,
-                            p_category_slug: categoryId,
-                        });
-                    } catch {
-                        // best-effort
-                    }
-                }
-            }
-        } catch (e) {
-            errors.push(`"${tx.description}": ${e instanceof Error ? e.message : "erro"}`);
+        const k = dedupKey(tx.date, tx.type, tx.amount, tx.description);
+        if (existing.has(k) || seen.has(k)) {
             summary.skipped++;
+            continue;
+        }
+        seen.add(k);
+
+        rowsToInsert.push({
+            date: tx.date,
+            amount: tx.amount,
+            type: tx.type,
+            description: tx.description,
+            category_id: categoryId,
+            status: mapStatus(tx.status),
+            needs_review: !isHigh,
+            notes: "Importação automática (planilha)",
+        });
+
+        if (isHigh && tx.suggestedCategoryId) {
+            const mk = merchantKey(tx.description);
+            if (mk) {
+                const vk = `${mk}__${categoryId}`;
+                const acc = voteAgg.get(vk);
+                if (acc) acc.inc++;
+                else voteAgg.set(vk, { merchant_key: mk, category_slug: categoryId, inc: 1 });
+            }
+        }
+    }
+
+    // 3) Insert em lotes
+    let allInserted = true;
+    const CHUNK = 200;
+    for (let i = 0; i < rowsToInsert.length; i += CHUNK) {
+        const chunk = rowsToInsert.slice(i, i + CHUNK);
+        const { error } = await (supabase.from("transactions") as any).insert(chunk);
+        if (error) {
+            allInserted = false;
+            errors.push(`Mês ${month}/${year}: falha ao inserir lote: ${error.message}`);
+            summary.skipped += chunk.length;
+            continue;
+        }
+        summary.imported += chunk.length;
+        summary.needsReview += chunk.filter((r: any) => r.needs_review).length;
+    }
+
+    // 4) Aprendizado em massa (best-effort; só se os inserts foram todos OK)
+    if (allInserted && voteAgg.size > 0) {
+        try {
+            await (supabase.rpc as any)("increment_merchant_votes_bulk", {
+                p: Array.from(voteAgg.values()),
+            });
+        } catch {
+            // best-effort
         }
     }
 
