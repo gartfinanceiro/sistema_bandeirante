@@ -28,12 +28,16 @@ import {
     getImportCarvaoSuppliers,
     importSheetTransactions,
 } from "@/app/(authenticated)/financeiro/import-actions";
+import {
+    MONTH_TABS,
+    fetchSheetCSV,
+    parseCSV,
+    parseSpreadsheetData,
+} from "@/lib/financeiro/sheet-parser";
 
 // =============================================================================
 // Constants
 // =============================================================================
-
-const SHEET_ID = "1J1KVgILegd9RDQLcMB-68I14bYpn1UqwUiFPlBxmuW0";
 
 const RAW_MATERIAL_SLUGS = new Set([
     "raw_material_charcoal",
@@ -67,222 +71,8 @@ function isRawMaterialCategory(categoryId: string | null, categories: CategoryOp
     return { isMaterial: false, isCharcoal: false, materialId: null };
 }
 
-const MONTH_TABS: { label: string; sheet: string; month: number }[] = [
-    { label: "Janeiro", sheet: "JANEIRO", month: 1 },
-    { label: "Fevereiro", sheet: "FEVEREIRO", month: 2 },
-    { label: "Março", sheet: "MARÇO", month: 3 },
-    { label: "Abril", sheet: "ABRIL", month: 4 },
-    { label: "Maio", sheet: "MAIO", month: 5 },
-    { label: "Junho", sheet: "JUNHO", month: 6 },
-    { label: "Julho", sheet: "JULHO", month: 7 },
-    { label: "Agosto", sheet: "AGOSTO", month: 8 },
-    { label: "Setembro", sheet: "SETEMBRO", month: 9 },
-    { label: "Outubro", sheet: "OUTUBRO", month: 10 },
-    { label: "Novembro", sheet: "NOVEMBRO", month: 11 },
-    { label: "Dezembro", sheet: "DEZEMBRO", month: 12 },
-];
-
-// =============================================================================
-// Google Sheets CSV Fetcher + Parser (client-side)
-// =============================================================================
-
-async function fetchSheetCSV(sheetName: string): Promise<string> {
-    // Use the Google Visualization API CSV export for public sheets
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Erro ao buscar planilha: ${response.status} ${response.statusText}`);
-    }
-    return response.text();
-}
-
-function parseCSVLine(line: string): string[] {
-    const result: string[] = [];
-    let current = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if (char === '"') {
-            if (inQuotes && line[i + 1] === '"') {
-                current += '"';
-                i++;
-            } else {
-                inQuotes = !inQuotes;
-            }
-        } else if (char === "," && !inQuotes) {
-            result.push(current.trim());
-            current = "";
-        } else {
-            current += char;
-        }
-    }
-    result.push(current.trim());
-    return result;
-}
-
-function parseCSV(csvText: string): string[][] {
-    const lines = csvText.split("\n");
-    return lines.map(line => parseCSVLine(line));
-}
-
-// Month names in Portuguese for date parsing
-const MONTH_NAMES: Record<string, number> = {
-    janeiro: 1, fevereiro: 2, março: 3, marco: 3, abril: 4,
-    maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9,
-    outubro: 10, novembro: 11, dezembro: 12,
-};
-
-/**
- * Parse the horizontal spreadsheet structure.
- *
- * Structure: Days are arranged horizontally. Each day block has ~9 columns:
- * - Cols 0-2: Main section (description, valor, situação)
- * - Cols 3-5: Outros section (description, valor, situação)
- * - Cols 6-8: Carvão do dia section (description, valor, situação)
- *
- * Row layout within each day block (~27 rows):
- * - Row 0: Date header ("02 de Março")
- * - Row 1: SALDO ANTERIOR
- * - Rows 2-23: Transaction rows
- * - Row 24: CARVÃO subtotal
- * - Row 25: OUTROS subtotal
- * - Row 26: SALDO FINAL
- *
- * Days are separated by a gap column.
- */
-function parseSpreadsheetData(
-    data: string[][],
-    monthNum: number,
-    year: number,
-    selectedDays: number[]
-): ParsedSheetTransaction[] {
-    if (data.length === 0) return [];
-
-    const transactions: ParsedSheetTransaction[] = [];
-
-    // Step 1: Find day blocks by scanning the first row for date headers
-    // Date headers look like: "01 de Março", "02 de Março", etc.
-    const dayBlocks: { startCol: number; day: number }[] = [];
-    const firstRow = data[0] || [];
-
-    for (let col = 0; col < firstRow.length; col++) {
-        const cell = (firstRow[col] || "").replace(/^"|"$/g, "").trim();
-        // Match patterns like "01 de Março" or "1 de março" or "01 de Marco"
-        const dateMatch = cell.match(/^(\d{1,2})\s+de\s+(\w+)/i);
-        if (dateMatch) {
-            const dayNum = parseInt(dateMatch[1], 10);
-            const monthName = dateMatch[2].toLowerCase().replace("ç", "c").replace("ã", "a");
-            // Verify this matches the expected month
-            const parsedMonth = MONTH_NAMES[monthName.replace("c", "ç").replace("a", "ã")] ||
-                MONTH_NAMES[monthName];
-            if (parsedMonth === monthNum || !parsedMonth) {
-                dayBlocks.push({ startCol: col, day: dayNum });
-            }
-        }
-    }
-
-    if (dayBlocks.length === 0) {
-        // Fallback: try detecting by column pattern
-        // Some sheets might use different header format
-        return [];
-    }
-
-    // Step 2: For each selected day, extract transactions from all 3 sections
-    for (const block of dayBlocks) {
-        if (selectedDays.length > 0 && !selectedDays.includes(block.day)) continue;
-
-        const isoDate = `${year}-${String(monthNum).padStart(2, "0")}-${String(block.day).padStart(2, "0")}`;
-
-        // Extract from 3 sections
-        const sections: { name: "principal" | "outros" | "carvao"; colOffset: number }[] = [
-            { name: "principal", colOffset: 0 },
-            { name: "outros", colOffset: 3 },
-            { name: "carvao", colOffset: 6 },
-        ];
-
-        for (const section of sections) {
-            const descCol = block.startCol + section.colOffset;
-            const valCol = descCol + 1;
-            const statusCol = descCol + 2;
-
-            // Transaction rows start at row 2 (0-indexed) and go until we hit
-            // CARVÃO subtotal, OUTROS subtotal, or SALDO FINAL
-            for (let row = 2; row < Math.min(data.length, 28); row++) {
-                const rowData = data[row] || [];
-
-                const rawDesc = (rowData[descCol] || "").replace(/^"|"$/g, "").trim();
-                const rawVal = (rowData[valCol] || "").replace(/^"|"$/g, "").trim();
-                const rawStatus = (rowData[statusCol] || "").replace(/^"|"$/g, "").trim();
-
-                // Skip system rows
-                const descUpper = rawDesc.toUpperCase();
-                if (
-                    !rawDesc ||
-                    descUpper.includes("SALDO ANTERIOR") ||
-                    descUpper.includes("SALDO FINAL") ||
-                    descUpper.includes("CARVÃO") && (descUpper.includes("TOTAL") || descUpper.includes("SUBTOTAL")) ||
-                    descUpper.includes("OUTROS") && (descUpper.includes("TOTAL") || descUpper.includes("SUBTOTAL")) ||
-                    descUpper === "CARVÃO" ||
-                    descUpper === "OUTROS"
-                ) {
-                    continue;
-                }
-
-                // Parse value — handle R$ format, parentheses for negative, comma decimal
-                let amount = parseMonetaryValue(rawVal);
-                if (amount === 0) continue; // Skip empty/zero rows
-
-                // Determine type: negative = saida, positive = entrada
-                const type: "entrada" | "saida" = amount < 0 ? "saida" : "entrada";
-                amount = Math.abs(amount);
-
-                transactions.push({
-                    day: block.day,
-                    date: isoDate,
-                    description: toTitleCase(rawDesc),
-                    amount,
-                    type,
-                    status: rawStatus || "Pago",
-                    section: section.name,
-                });
-            }
-        }
-    }
-
-    return transactions;
-}
-
-function toTitleCase(text: string): string {
-    return text
-        .toLowerCase()
-        .replace(/(^|\s|-)\S/g, (char) => char.toUpperCase());
-}
-
-function parseMonetaryValue(raw: string): number {
-    if (!raw) return 0;
-
-    let cleaned = raw.trim();
-
-    // Remove R$ prefix
-    cleaned = cleaned.replace(/R\$\s*/g, "");
-
-    // Handle parentheses for negative: (1.234,56) → -1234.56
-    const isNegative = cleaned.startsWith("(") && cleaned.endsWith(")") || cleaned.startsWith("-");
-    cleaned = cleaned.replace(/[()]/g, "");
-
-    // Remove thousand separators (dots) and convert decimal comma to dot
-    // Brazilian format: 1.234,56 → 1234.56
-    cleaned = cleaned.replace(/\./g, "").replace(",", ".");
-
-    // Remove any remaining non-numeric chars except dot and minus
-    cleaned = cleaned.replace(/[^\d.\-]/g, "");
-
-    const value = parseFloat(cleaned);
-    if (isNaN(value)) return 0;
-
-    return isNegative ? -Math.abs(value) : value;
-}
+// Parser, fetcher e constantes da planilha agora em "@/lib/financeiro/sheet-parser"
+// (compartilhados entre este dialog e o cron de importação automática).
 
 // =============================================================================
 // Component

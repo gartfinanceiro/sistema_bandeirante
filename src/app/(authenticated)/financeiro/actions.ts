@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllPages } from "@/lib/supabase/paginate";
+import { merchantKey } from "@/lib/financeiro/merchant-key";
 import type { TransactionType, PaymentStatus } from "@/types/database";
 
 // =============================================================================
@@ -42,6 +43,7 @@ export interface TransactionRow {
     material?: {
         name: string;
     } | null;
+    needs_review?: boolean;
 }
 
 export interface MonthSummary {
@@ -536,7 +538,8 @@ export async function getTransactions(
     year: number,
     page: number = 1,
     pageSize: number = 10,
-    search?: string
+    search?: string,
+    reviewOnly: boolean = false
 ): Promise<PaginatedTransactions> {
     const supabase = await createClient();
 
@@ -560,6 +563,7 @@ export async function getTransactions(
             type,
             description,
             status,
+            needs_review,
             category:transaction_categories(
                 id,
                 name,
@@ -569,9 +573,14 @@ export async function getTransactions(
                     name
                 )
             )
-        `, { count: "exact" })
-        .gte("date", startDate)
-        .lte("date", endDate);
+        `, { count: "exact" });
+
+    if (reviewOnly) {
+        // Fila de revisão: todos os pendentes, independente do mês selecionado
+        query = query.eq("needs_review", true);
+    } else {
+        query = query.gte("date", startDate).lte("date", endDate);
+    }
 
     if (search && search.trim() !== "") {
         query = query.ilike("description", `%${search.trim()}%`);
@@ -600,6 +609,19 @@ export async function getTransactions(
         pageSize,
         totalPages: Math.ceil((count || 0) / pageSize),
     };
+}
+
+// =============================================================================
+// Review queue count (badge "A Revisar")
+// =============================================================================
+
+export async function getReviewCount(): Promise<number> {
+    const supabase = await createClient();
+    const { count } = await supabase
+        .from("transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("needs_review", true);
+    return count || 0;
 }
 
 // =============================================================================
@@ -829,6 +851,7 @@ export async function updateTransaction(formData: FormData): Promise<{
         description: description || null,
         has_icms_credit: hasIcmsCredit,
         icms_rate: hasIcmsCredit ? icmsRate : 0,
+        needs_review: false, // edição manual = revisão concluída
     };
 
     // Update material_id: resolved from virtual category or from category slug fallback.
@@ -843,6 +866,22 @@ export async function updateTransaction(formData: FormData): Promise<{
     if (error) {
         console.error("Error updating transaction:", error);
         return { success: false, error: error.message };
+    }
+
+    // Edição manual = revisão humana: aprende o vínculo fornecedor->categoria
+    if (finalCategoryId && description) {
+        const mKey = merchantKey(description);
+        if (mKey) {
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (supabase.rpc as any)("increment_merchant_vote", {
+                    p_merchant_key: mKey,
+                    p_category_slug: finalCategoryId,
+                });
+            } catch {
+                // aprendizado é best-effort
+            }
+        }
     }
 
     revalidatePath("/financeiro");

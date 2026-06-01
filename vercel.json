@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/financeiro/auto-import",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

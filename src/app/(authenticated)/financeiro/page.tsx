@@ -16,6 +16,7 @@ import {
     getCategories,
     getMonthSummary,
     getTransactions,
+    getReviewCount,
     deleteTransaction,
     type CategoryGroup,
     type MonthSummary,
@@ -32,8 +33,9 @@ export default function FinanceiroPage() {
     const [page, setPage] = useState(1);
     const [searchQuery, setSearchQuery] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
-    const [activeTab, setActiveTab] = useState<"transacoes" | "recurring" | "relatorios" | "fiscal">("transacoes");
+    const [activeTab, setActiveTab] = useState<"transacoes" | "revisar" | "recurring" | "relatorios" | "fiscal">("transacoes");
     const [overdueBillsCount, setOverdueBillsCount] = useState(0);
+    const [reviewCount, setReviewCount] = useState(0);
 
     // Data states
     const [summary, setSummary] = useState<MonthSummary>({
@@ -75,22 +77,24 @@ export default function FinanceiroPage() {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [summaryData, txData, catData, overdueCount] = await Promise.all([
+            const [summaryData, txData, catData, overdueCount, reviewCnt] = await Promise.all([
                 getMonthSummary(month, year, debouncedSearch),
-                getTransactions(month, year, page, 10, debouncedSearch),
+                getTransactions(month, year, page, 10, debouncedSearch, activeTab === "revisar"),
                 getCategories(),
                 getOverdueBillsCount(month, year),
+                getReviewCount(),
             ]);
             setSummary(summaryData);
             setTransactions(txData);
             setCategories(catData);
             setOverdueBillsCount(overdueCount);
+            setReviewCount(reviewCnt);
         } catch (error) {
             console.error("Error loading data:", error);
         } finally {
             setIsLoading(false);
         }
-    }, [month, year, page, debouncedSearch]);
+    }, [month, year, page, debouncedSearch, activeTab]);
 
     useEffect(() => {
         loadData();
@@ -224,13 +228,27 @@ export default function FinanceiroPage() {
             <div className="border-b border-border">
                 <nav className="-mb-px flex space-x-8">
                     <button
-                        onClick={() => setActiveTab("transacoes")}
+                        onClick={() => { setActiveTab("transacoes"); setPage(1); }}
                         className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "transacoes"
                             ? "border-primary text-primary"
                             : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
                             }`}
                     >
                         Transações
+                    </button>
+                    <button
+                        onClick={() => { setActiveTab("revisar"); setPage(1); }}
+                        className={`relative py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === "revisar"
+                            ? "border-primary text-primary"
+                            : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+                            }`}
+                    >
+                        A Revisar
+                        {reviewCount > 0 && (
+                            <span className="absolute -top-0.5 -right-3 flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-bold text-white bg-amber-500 rounded-full">
+                                {reviewCount}
+                            </span>
+                        )}
                     </button>
                     <button
                         onClick={() => setActiveTab("recurring")}
@@ -284,6 +302,41 @@ export default function FinanceiroPage() {
                     month={month}
                     year={year}
                 />
+            ) : activeTab === "revisar" ? (
+                <div className="space-y-4 animate-in fade-in duration-200">
+                    <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm text-amber-800 dark:text-amber-300">
+                        Lançamentos importados automaticamente cuja categoria ficou incerta (mostrando todos os meses).
+                        Edite cada um para confirmar a categoria — ao salvar, ele sai desta lista e o sistema aprende com a sua escolha.
+                    </div>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Buscar por descrição..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="h-9 w-full pl-9 pr-4 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
+                        />
+                    </div>
+                    {!isLoading && transactions.data.length === 0 ? (
+                        <div className="rounded-md border border-border p-8 text-center text-muted-foreground">
+                            Nada para revisar. 🎉
+                        </div>
+                    ) : (
+                        <TransactionTable
+                            transactions={transactions.data}
+                            page={page}
+                            totalPages={transactions.totalPages}
+                            onPageChange={setPage}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                        />
+                    )}
+                </div>
             ) : (
                 /* Filter & Table Section */
                 <div className="space-y-4 animate-in fade-in duration-200">

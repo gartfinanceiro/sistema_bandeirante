@@ -88,6 +88,11 @@ export function TransactionTable({
                                             </span>
                                         )}
                                     </span>
+                                    {tx.needs_review && (
+                                        <span className="mt-0.5 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 px-1.5 py-0.5 rounded">
+                                            A revisar
+                                        </span>
+                                    )}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-muted-foreground hidden md:table-cell">
                                     {tx.category ? (
