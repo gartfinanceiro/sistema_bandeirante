@@ -13,13 +13,18 @@ import { merchantKey } from "@/lib/financeiro/merchant-key";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export interface AutoImportResult {
+export interface MonthImportSummary {
     month: number;
     year: number;
     parsed: number;
     imported: number;
     needsReview: number;
     skipped: number;
+}
+
+export interface AutoImportResult {
+    processed: MonthImportSummary[];
+    totals: { parsed: number; imported: number; needsReview: number; skipped: number };
     errors: string[];
 }
 
@@ -35,6 +40,10 @@ function nowInSaoPaulo(): { month: number; year: number } {
     return { month, year };
 }
 
+function previousMonth(month: number, year: number): { month: number; year: number } {
+    return month === 1 ? { month: 12, year: year - 1 } : { month: month - 1, year };
+}
+
 function mapStatus(raw: string): string {
     const s = (raw || "").toLowerCase().trim();
     if (s.includes("pend")) return "pendente";
@@ -43,50 +52,43 @@ function mapStatus(raw: string): string {
     return "pago";
 }
 
-/**
- * Importação automática do mês corrente (chamada pelo cron). Puramente financeira:
- * insere data/valor/tipo/categoria/status, SEM efeitos de estoque/adiantamento.
- * Confiantes entram prontos e ALIMENTAM o aprendizado; incertos entram marcados
- * needs_review (badge) sem aprender. Idempotente (dedup por data+tipo+valor+descrição).
- */
-export async function autoImportCurrentMonth(): Promise<AutoImportResult> {
-    const { month, year } = nowInSaoPaulo();
-    const result: AutoImportResult = {
-        month, year, parsed: 0, imported: 0, needsReview: 0, skipped: 0, errors: [],
-    };
+/** Importa um mês específico (puramente financeiro, idempotente). */
+async function importMonth(
+    supabase: any,
+    categories: any[],
+    bestRows: any[],
+    month: number,
+    year: number,
+    errors: string[]
+): Promise<MonthImportSummary> {
+    const summary: MonthImportSummary = { month, year, parsed: 0, imported: 0, needsReview: 0, skipped: 0 };
 
     const tab = sheetTabForMonth(month);
     if (!tab) {
-        result.errors.push(`Sem aba de planilha para o mês ${month}`);
-        return result;
+        errors.push(`Sem aba de planilha para o mês ${month}`);
+        return summary;
     }
 
     let parsed;
     try {
         const csv = await fetchSheetCSV(tab);
-        const data = parseCSV(csv);
-        parsed = parseSpreadsheetData(data, month, year, []); // todos os dias do mês
+        parsed = parseSpreadsheetData(parseCSV(csv), month, year, []); // todos os dias
     } catch (e) {
-        result.errors.push(`Falha ao buscar/parsear planilha: ${e instanceof Error ? e.message : "erro"}`);
-        return result;
+        errors.push(`Mês ${month}/${year}: falha ao buscar/parsear planilha: ${e instanceof Error ? e.message : "erro"}`);
+        return summary;
     }
-    result.parsed = parsed.length;
-    if (parsed.length === 0) return result;
+    summary.parsed = parsed.length;
+    if (parsed.length === 0) return summary;
 
-    const supabase = createAdminClient();
-    const categories = await fetchImportCategories(supabase);
-    const bestRows = await fetchBestCategoryRows(supabase);
     const matched = categorizeTransactions(parsed, categories, bestRows);
 
     for (const tx of matched) {
         try {
             const isHigh = tx.matchConfidence === "high";
-            const needsReview = !isHigh; // medium/low/none -> revisar
+            const needsReview = !isHigh;
             let categoryId = tx.suggestedCategoryId || "a_classificar";
-            // Import puramente financeira: não lidamos com materiais virtuais aqui.
             if (categoryId.startsWith("material_")) categoryId = "raw_material_general";
 
-            // Dedup idempotente
             const { data: existing } = await supabase
                 .from("transactions")
                 .select("id")
@@ -96,7 +98,7 @@ export async function autoImportCurrentMonth(): Promise<AutoImportResult> {
                 .ilike("description", tx.description)
                 .limit(1);
             if (existing && existing.length > 0) {
-                result.skipped++;
+                summary.skipped++;
                 continue;
             }
 
@@ -111,15 +113,14 @@ export async function autoImportCurrentMonth(): Promise<AutoImportResult> {
                 notes: "Importação automática (planilha)",
             });
             if (error) {
-                result.errors.push(`"${tx.description}": ${error.message}`);
-                result.skipped++;
+                errors.push(`"${tx.description}" (${tx.date}): ${error.message}`);
+                summary.skipped++;
                 continue;
             }
 
-            result.imported++;
-            if (needsReview) result.needsReview++;
+            summary.imported++;
+            if (needsReview) summary.needsReview++;
 
-            // Aprende SÓ os confiantes (não polui o mapa com palpite não revisado)
             if (isHigh && tx.suggestedCategoryId) {
                 const mk = merchantKey(tx.description);
                 if (mk) {
@@ -134,9 +135,42 @@ export async function autoImportCurrentMonth(): Promise<AutoImportResult> {
                 }
             }
         } catch (e) {
-            result.errors.push(`"${tx.description}": ${e instanceof Error ? e.message : "erro"}`);
-            result.skipped++;
+            errors.push(`"${tx.description}": ${e instanceof Error ? e.message : "erro"}`);
+            summary.skipped++;
         }
+    }
+
+    return summary;
+}
+
+/**
+ * Importação automática do MÊS ANTERIOR + MÊS CORRENTE (chamada pelo cron).
+ * Processar o mês anterior cobre a virada de mês (lançamentos lançados com atraso)
+ * e backfill recente. Puramente financeira; confiantes alimentam o aprendizado,
+ * incertos entram marcados needs_review. Idempotente (dedup), seguro rodar todo dia.
+ */
+export async function autoImportRecentMonths(): Promise<AutoImportResult> {
+    const cur = nowInSaoPaulo();
+    const prev = previousMonth(cur.month, cur.year);
+
+    const result: AutoImportResult = {
+        processed: [],
+        totals: { parsed: 0, imported: 0, needsReview: 0, skipped: 0 },
+        errors: [],
+    };
+
+    const supabase = createAdminClient();
+    const categories = await fetchImportCategories(supabase);
+    const bestRows = await fetchBestCategoryRows(supabase);
+
+    // Ordem cronológica: anterior, depois corrente
+    for (const m of [prev, cur]) {
+        const s = await importMonth(supabase, categories, bestRows, m.month, m.year, result.errors);
+        result.processed.push(s);
+        result.totals.parsed += s.parsed;
+        result.totals.imported += s.imported;
+        result.totals.needsReview += s.needsReview;
+        result.totals.skipped += s.skipped;
     }
 
     return result;

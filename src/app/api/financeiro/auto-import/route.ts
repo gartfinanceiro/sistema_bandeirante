@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { autoImportCurrentMonth } from "@/app/(authenticated)/financeiro/auto-import-actions";
+import { autoImportRecentMonths } from "@/app/(authenticated)/financeiro/auto-import-actions";
 
 // Rota do cron de importação automática. Protegida por CRON_SECRET (o Vercel Cron envia
 // "Authorization: Bearer <CRON_SECRET>" automaticamente quando a env existe).
@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        const result = await autoImportCurrentMonth();
+        const result = await autoImportRecentMonths();
         console.log("[auto-import]", JSON.stringify(result));
         return NextResponse.json({ ok: true, ...result });
     } catch (e) {
