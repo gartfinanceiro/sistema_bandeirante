@@ -93,6 +93,20 @@ export function categorizeTransactions(
     return transactions.map((tx) => {
         const descLower = tx.description.toLowerCase().trim();
 
+        // 0) Coluna "Carvão do dia" é, por definição, compra de carvão vegetal
+        if (tx.section === "carvao") {
+            const cat = slugMap.get("raw_material_charcoal");
+            if (cat) {
+                return {
+                    ...tx,
+                    suggestedCategoryId: cat.id,
+                    suggestedCategoryName: cat.name,
+                    matchConfidence: "high",
+                    matchNote: `Coluna "Carvão do dia" → ${cat.name}`,
+                };
+            }
+        }
+
         // 1) Mapa aprendido — fornecedor já visto no histórico
         const learned = bestMap.get(merchantKey(tx.description));
         if (learned) {

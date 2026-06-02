@@ -162,15 +162,19 @@ export function parseSpreadsheetData(
                 const rawVal = (rowData[valCol] || "").replace(/^"|"$/g, "").trim();
                 const rawStatus = (rowData[statusCol] || "").replace(/^"|"$/g, "").trim();
 
-                const descUpper = rawDesc.toUpperCase();
+                // Rótulos de resumo (subtotais/saldos) que NÃO são transações.
+                // Compara sem acento e exato para não pegar fornecedores legítimos.
+                const descKey = rawDesc.toUpperCase().trim().normalize("NFD").replace(/[̀-ͯ]/g, "");
+                const SUMMARY_LABELS = [
+                    "TOTAL", "TOTAL GERAL", "SUBTOTAL",
+                    "CARVAO", "OUTROS",
+                    "SALDO", "SALDO FINAL", "SALDO ANTERIOR", "SALDO DO DIA", "SALDO INICIAL",
+                ];
                 if (
                     !rawDesc ||
-                    descUpper.includes("SALDO ANTERIOR") ||
-                    descUpper.includes("SALDO FINAL") ||
-                    (descUpper.includes("CARVÃO") && (descUpper.includes("TOTAL") || descUpper.includes("SUBTOTAL"))) ||
-                    (descUpper.includes("OUTROS") && (descUpper.includes("TOTAL") || descUpper.includes("SUBTOTAL"))) ||
-                    descUpper === "CARVÃO" ||
-                    descUpper === "OUTROS"
+                    SUMMARY_LABELS.includes(descKey) ||
+                    (descKey.includes("CARVAO") && (descKey.includes("TOTAL") || descKey.includes("SUBTOTAL"))) ||
+                    (descKey.includes("OUTROS") && (descKey.includes("TOTAL") || descKey.includes("SUBTOTAL")))
                 ) {
                     continue;
                 }
